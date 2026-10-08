@@ -88,7 +88,7 @@
           "reserved_until": "2026-09-11T04:35:03.000Z",
           "purpose": "consume_magic"
         },
-        "note": "THE CASE THAT BROKE A MODULE: reservation_id itself was added to fee_payer without a major bump, and a reader that rejected unknown keys answered 502 to its own users. A reader accepts unknown keys and forwards the fee_payer object to /tx/consume unchanged."
+        "note": "THE CASE THAT BROKE A MODULE: reservation_id itself was added to fee_payer without a major bump, and a reader that rejected unknown keys answered 502 to its own users. A reader accepts unknown keys and forwards the fee_payer object to /tx/consume unchanged. Forwarding this object is only valid against a server whose FeePayerRequest accepts lease_epoch: the service ships that acceptance one release before /fee/utxo sends the key (compatibility.md, section 3)."
       },
       {
         "name": "additive-key-at-top-level",

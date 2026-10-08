@@ -1,6 +1,6 @@
 {
   "contract_version": "1.0.0",
-  "description": "Error codes of the routes in openapi.json. Every non-2xx body is the ErrorResponse envelope. status lists the HTTP statuses the code is returned with. routes lists the path ids the code can appear on; '*' means every route except /health. The table is what the server documents today, not a promise of exhaustiveness: a reader must handle an unknown code by its HTTP status (see compatibility.md).",
+  "description": "Error codes of the routes in openapi.json. Every non-2xx body is the ErrorResponse envelope. status lists the HTTP statuses the code is returned with. routes lists the path ids the code can appear on; '*' means every route except /health. The table is checked against the server source in both directions: every code listed here is emitted by the server, and every code the server emits on these routes is listed with its status. Codes emitted only on routes outside openapi.json are not listed. A later minor release may add codes, so a reader must still handle an unknown code by its HTTP status (see compatibility.md).",
   "codes": [
     {
       "code": "BAD_REQUEST",
@@ -268,7 +268,7 @@
       "routes": [
         "/tx/submit"
       ],
-      "meaning": "The chain node rejected the transaction, or the transaction was not issued by this service. The node's own message is kept in error.message."
+      "meaning": "The chain node rejected the transaction, or this instance does not know it (not issued here, past its deadline, or issued before a restart or by another replica). The transaction may still have reached the chain (for example 'input already spent' because this very transaction spent it): call GET /tx/status/{details.tx_hash} before building again, and rebuild only on not_found once the transaction has expired (compatibility.md, 'Before rebuilding'). The node's own message, when there is one, is kept in error.message."
     },
     {
       "code": "TX_HASH_INVALID",
@@ -369,6 +369,216 @@
         "/tx/quote"
       ],
       "meaning": "owner_fee_addresses has a duplicate address."
+    },
+    {
+      "code": "LAMP_AMOUNT_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: lamp_amount is not an oildrop integer (> 0 for kind schedule, >= 0 for kind instant)."
+    },
+    {
+      "code": "DID_COMMIT_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault or bind-did: did_commit is not exactly 64 lowercase hex characters (32 bytes)."
+    },
+    {
+      "code": "DID_COMMIT_UNEXPECTED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: did_commit is only for kind instant (it goes into wakeme_link)."
+    },
+    {
+      "code": "VAULT_ALREADY_EXISTS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault, kind instant: the owner (or this did_commit) already has an instant vault; a second one is not built. details.existing lists them."
+    },
+    {
+      "code": "FUNDING_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: the funding block is malformed (details.field when known)."
+    },
+    {
+      "code": "FUNDING_WITNESS_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: funding declares an anchor_ref, controller_pkh or device_key_hash other than owner_witness (details.mismatched); one DID has one anchor, controller and device key."
+    },
+    {
+      "code": "FUNDING_ANCHOR_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: funding names a DID anchor that is not one (no anchor NFT under the network's policy)."
+    },
+    {
+      "code": "FUNDING_SCRIPT_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: funding.did_payment_script_cbor does not hash to funding.address."
+    },
+    {
+      "code": "FUNDING_FEE_PAYER_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: funding.fee_payer is on the wrong network, not a key address, or not an unspent UTxO."
+    },
+    {
+      "code": "FUNDING_CHANGE_ADDRESS_CONFLICT",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: change_address and funding were both sent; with funding, change goes to the funding addresses. Drop change_address."
+    },
+    {
+      "code": "FUNDING_INSUFFICIENT",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: the did_payment wallet does not hold the LAMP (or ADA) the vault needs."
+    },
+    {
+      "code": "FUNDING_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault: the built transaction breaks a funding rule (read back from the CBOR). Nothing was issued."
+    },
+    {
+      "code": "FUNDING_UNAVAILABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route create-vault with funding: the deployment has no did_stake entry, so the DID anchor cannot be read."
+    },
+    {
+      "code": "INSTANT_GEN_M_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route instant-gen: m (nanogic) is missing, not a digit string, or 0. In a quote, m may be left out (or \"0\") to quote at the current maximum."
+    },
+    {
+      "code": "INSTANT_GEN_M_ABOVE_MAX",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route instant-gen: m is above what the vault can still generate this epoch; details.max_m is the limit."
+    },
+    {
+      "code": "INSTANT_GEN_MAX_M_ZERO",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route instant-gen, quote without m: the vault can generate nothing more this epoch (max_m = 0), so there is no transaction to quote."
+    },
+    {
+      "code": "ENGAGE_THREAD_EXISTS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route open-thread: the owner already has an Engage thread."
+    },
+    {
+      "code": "OPEN_THREAD_FUNDING_UNSUPPORTED",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route open-thread: a funding block is not supported on this route."
+    },
+    {
+      "code": "OPEN_THREAD_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route open-thread: the built transaction does not create the thread as required (NFT, output, genesis datum). Nothing was issued."
+    },
+    {
+      "code": "DID_ALREADY_BOUND",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route bind-did: the thread is already bound to a DID (one way, once); details.did_commit is the bound value."
+    },
+    {
+      "code": "BIND_DID_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route bind-did: the built transaction does not bind as required (redeemer, value, datum, owner signature). Nothing was issued."
     },
     {
       "code": "OWNER_HASH_INVALID",
@@ -548,13 +758,50 @@
       "meaning": "The device key is not listed in the DID anchor."
     },
     {
+      "code": "OWNER_ANCHOR_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "owner_witness.anchor_ref is not a DID anchor: the UTxO carries no anchor NFT (32-byte name, quantity 1) under the network's anchor policy. details.anchor_ref."
+    },
+    {
+      "code": "OWNER_AUTH_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The owner proof names another owner than the vault's: owner_witness.did_stake_script_cbor does not hash to the owner's script hash, or the proof is for a key owner. Usually the wrong DID or anchor policy."
+    },
+    {
+      "code": "OWNER_WITHDRAW_RETURNED_NOTHING",
+      "status": [
+        500
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The service's own owner-witness step failed (the withdrawal it attaches returned nothing). A fault of the service, not of the request: quote the message to the operator; do not retry blindly."
+    },
+    {
       "code": "VAULT_NOT_FOUND",
       "status": [
         404
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "The owner has no vault. Not the same as CHAIN_UNAVAILABLE; do not offer to create a second vault on a read failure."
     },
@@ -565,7 +812,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "The owner has several valid vaults and the request did not say which (details.utxo_refs)."
     },
@@ -587,7 +835,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "The vault datum does not match the schema this deployment knows."
     },
@@ -645,6 +894,17 @@
         "/tx/quote"
       ],
       "meaning": "This deployment block serves a vault kind that the route has no builder for."
+    },
+    {
+      "code": "WINDOW_ORIGIN_UNAVAILABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The network has no epoch-window origin (window_origin_ms), so the protocol epoch cannot be computed here. A deployment state, not a request error; details.cause_code keeps the library code."
     },
     {
       "code": "ENGAGE_THREAD_NOT_FOUND",
@@ -749,7 +1009,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "Neither change_address nor fee_payer was sent and the owner is a script."
     },
@@ -760,7 +1021,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "change_address is not a valid address for this network."
     },
@@ -783,7 +1045,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "A did_stake owner has a non-zero reward and no Phoenix wallet could be derived to return it to."
     },
@@ -794,7 +1057,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "A did_stake owner's reward is below the min-ADA of the return output."
     },
@@ -844,7 +1108,7 @@
         "/tx/quote",
         "/tx/sponsor/first-consume"
       ],
-      "meaning": "The vault UTxO is an input of a transaction submitted through this service that is not yet in a block. Retry after it lands."
+      "meaning": "An input this build needs (details.utxo_ref) is spent by a transaction submitted through this service that is not in a block yet; details.pending_tx_hash is that transaction (null when the service did not record its hash). If it is the transaction you submitted for the same operation, the operation is in flight: poll GET /tx/status/{pending_tx_hash} and do not build again. Otherwise retry after it lands."
     },
     {
       "code": "TX_BUILD_REJECTED",
@@ -853,7 +1117,8 @@
       ],
       "routes": [
         "/tx/consume",
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
       ],
       "meaning": "The protocol refuses the request before any transaction exists (insufficient LAMP, MAGIC below required, stale price beacon, ...). error.message says why."
     },
@@ -1123,7 +1388,8 @@
         400
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
       ],
       "meaning": "The request body is malformed for this step (details.field)."
     },
@@ -1178,15 +1444,24 @@
       "meaning": "The built transaction does not match the step. No transaction is returned."
     },
     {
-      "code": "SPONSOR_OWNER_DID_UNVERIFIABLE",
+      "code": "SPONSOR_FEE_WALLET_IS_PLATFORM",
       "status": [
-        501
+        422
       ],
       "routes": [
-        "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/first-consume"
       ],
-      "meaning": "The deployment cannot verify the DID owner."
+      "meaning": "The fee wallet (fee_payer.address or change_address) is paid by a pinned platform key. A platform key is not a wallet: pay fees from another key wallet. details.step."
+    },
+    {
+      "code": "SPONSOR_WITHDRAW_COUNT",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The built transaction does not carry exactly the withdrawal entries the owner needs (one for a script owner, none for a key owner). Nothing was issued."
     }
   ]
 }

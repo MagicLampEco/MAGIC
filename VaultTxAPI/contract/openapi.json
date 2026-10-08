@@ -206,7 +206,7 @@
       },
       "FeePayerRequest": {
         "type": "object", "required": ["utxo", "address"], "additionalProperties": false,
-        "description": "The fee_payer object of a REQUEST is CLOSED: a key other than utxo, address, reservation_id is refused with 400 FEE_PAYER_SHAPE (details.extra_fields) (src/feePayer.ts parseFeePayerShape). Forward the object exactly as /fee/utxo returned it, never a re-picked subset: when the service adds a key to that object it ships a build-route release that accepts the key (compatibility.md, fee_payer echo rule).",
+        "description": "The fee_payer object of a REQUEST is CLOSED: a key other than utxo, address, reservation_id is refused with 400 FEE_PAYER_SHAPE (details.extra_fields) (src/feePayer.ts parseFeePayerShape). Forward the object exactly as /fee/utxo returned it, never a re-picked subset: when the service adds a key to that object it first ships a release whose build routes accept the key, and only the next release sends it from /fee/utxo (compatibility.md, fee_payer echo rule).",
         "properties": {
           "utxo": { "$ref": "#/components/schemas/UtxoRef" },
           "address": { "$ref": "#/components/schemas/Address" },
@@ -235,10 +235,31 @@
         }
       },
       "OwnerRequest": {
-        "type": "object",
-        "description": "Owner of the vault: { type: key|script, hash } or { type: did, ... }. owner_pkh is the legacy alias of { type: key }.",
-        "required": ["type"],
-        "properties": { "type": { "type": "string" }, "hash": { "$ref": "#/components/schemas/Hex56" }, "did": { "type": "string" } }
+        "description": "Owner of the vault, CLOSED: { type: key|script, hash }, or { type: did, did, device_key_hash? } (src/owner.ts parseOwnerFields, parseDidOwner). A key outside these is refused with 400 OWNER_CREDENTIAL_SHAPE (details.extra_fields). A did owner does not go with owner_witness or owner_pkh (400 OWNER_DID_CONFLICT). owner_pkh, beside owner, is the legacy alias of { type: key }.",
+        "oneOf": [
+          {
+            "type": "object", "required": ["type", "hash"], "additionalProperties": false,
+            "properties": { "type": { "type": "string", "enum": ["key", "script"] }, "hash": { "$ref": "#/components/schemas/Hex56" } }
+          },
+          {
+            "type": "object", "required": ["type", "did"], "additionalProperties": false,
+            "properties": {
+              "type": { "const": "did" },
+              "did": { "type": "string", "pattern": "^did:[!-~]{1,252}$", "description": "did: then printable ASCII without spaces, 5..256 bytes in all." },
+              "device_key_hash": { "$ref": "#/components/schemas/Hex56" }
+            }
+          }
+        ]
+      },
+      "OwnerWitness": {
+        "type": "object", "required": ["did_stake_script_cbor", "anchor_ref", "controller_pkh", "device_key_hash"],
+        "description": "Proof of a script owner (did_stake), required for { type: script }; refused with a key owner (400 OWNER_WITNESS_UNEXPECTED). Each key is required and checked (400 OWNER_WITNESS_SHAPE, details.field); keys the parser does not read are ignored (src/owner.ts parseOwnerWitness).",
+        "properties": {
+          "did_stake_script_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "anchor_ref": { "$ref": "#/components/schemas/UtxoRef" },
+          "controller_pkh": { "$ref": "#/components/schemas/Hex56" },
+          "device_key_hash": { "$ref": "#/components/schemas/Hex56" }
+        }
       },
       "ConsumeRequest": {
         "type": "object",
@@ -246,7 +267,7 @@
         "properties": {
           "owner": { "$ref": "#/components/schemas/OwnerRequest" },
           "owner_pkh": { "$ref": "#/components/schemas/Hex56" },
-          "owner_witness": { "type": "object" },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
           "change_address": { "$ref": "#/components/schemas/Address" },
           "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
           "op_type": { "type": "integer" },
@@ -457,9 +478,10 @@
         }
       },
       "QuoteRequest": {
-        "type": "object", "required": ["route", "params"],
+        "type": "object", "required": ["route", "params"], "additionalProperties": false,
+        "description": "CLOSED: a key other than route, params, owner_fee_addresses is refused with 400 FEE_QUOTE_SHAPE (details.extra_fields); a route outside the enum with 400 FEE_QUOTE_ROUTE_UNKNOWN (src/feeQuote.ts parseQuoteBody, src/locks.ts ISSUED_ROUTES). Each route answers the error codes of its own build route (error-codes.json).",
         "properties": {
-          "route": { "type": "string" },
+          "route": { "type": "string", "enum": ["create-vault", "instant-gen", "refresh-checkpoint", "schedule-commit", "schedule-fire", "consume", "open-thread", "bind-did"] },
           "params": { "type": "object", "description": "The body of the build route being quoted, without fee_payer." },
           "owner_fee_addresses": { "type": "array", "items": { "$ref": "#/components/schemas/Address" } }
         }
@@ -473,7 +495,7 @@
               "fee_lovelace": { "$ref": "#/components/schemas/Digits" },
               "fronted_lovelace": { "$ref": "#/components/schemas/Digits" },
               "available": { "type": "boolean" },
-              "reason": { "type": "string" },
+              "reason": { "type": "string", "description": "Present when available is false. OPEN set (a reader must accept a value it does not know); today: FEE_QUOTE_FEECOVER_UNCONFIGURED, FEE_QUOTE_FEECOVER_NO_DEFAULT_APP, FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED, FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN, FEE_QUOTE_FEECOVER_TOKEN_ABSENT, FEE_QUOTE_FEECOVER_TIMEOUT, FEE_QUOTE_FEECOVER_UNREACHABLE, FEE_QUOTE_FEECOVER_HTTP_STATUS, FEE_QUOTE_FEECOVER_BAD_RESPONSE, FEE_QUOTE_FEECOVER_DECLINED (src/feeQuote.ts FeeQuoteReason)." },
               "rule": { "type": "string" },
               "message": { "type": "string" },
               "upstream_status": { "type": "integer" }
@@ -491,7 +513,7 @@
                 "type": "object", "required": ["utxo", "address"],
                 "properties": { "utxo": { "$ref": "#/components/schemas/UtxoRef" }, "address": { "$ref": "#/components/schemas/Address" } }
               },
-              "reason": { "type": "string" }
+              "reason": { "type": "string", "description": "Present when available is false. OPEN set (a reader must accept a value it does not know); today: FEE_QUOTE_OWNER_ADDRESSES_ABSENT, FEE_QUOTE_OWNER_NO_ADA_UTXO, FEE_QUOTE_OWNER_INSUFFICIENT (src/feeQuote.ts FeeQuoteReason)." }
             }
           },
           "fee_sources": {
@@ -515,7 +537,8 @@
         "description": "Plus exactly one of change_address or fee_payer, and owner_witness for a script owner. draw_epoch is the summary.epoch of the preceding draw-magic answer.",
         "properties": {
           "owner": { "$ref": "#/components/schemas/OwnerRequest" },
-          "owner_witness": { "type": "object" },
+          "owner_pkh": { "$ref": "#/components/schemas/Hex56", "description": "Legacy ALIAS of owner { type: key, hash }, not a second owner: beside owner it must name the same key (400 OWNER_ALIAS_MISMATCH), and it does not go with a did owner (400 OWNER_DID_CONFLICT). Send owner." },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
           "change_address": { "$ref": "#/components/schemas/Address" },
           "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
           "op_type": { "type": "integer" },

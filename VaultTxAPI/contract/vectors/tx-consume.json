@@ -534,9 +534,13 @@
           "error": {
             "code": "PREVIOUS_TX_PENDING",
             "message": "Vault input is in a pending transaction.",
-            "details": {}
+            "details": {
+              "utxo_ref": "e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd76#0",
+              "pending_tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+            }
           }
-        }
+        },
+        "note": "If pending_tx_hash is the transaction you submitted for this operation, the operation is in flight: poll GET /tx/status/{pending_tx_hash}, do not build again."
       },
       {
         "name": "reservation-expired",
@@ -631,7 +635,7 @@
             "details": {}
           }
         },
-        "note": "A reader treats an unknown code by its HTTP status class (409: conflict, rebuild) and does not fail the parse."
+        "note": "A reader treats an unknown code by its HTTP status class (409: conflict; do not rebuild automatically) and does not fail the parse."
       }
     ],
     "invalid": [

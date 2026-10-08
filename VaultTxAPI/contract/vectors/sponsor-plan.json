@@ -23,6 +23,17 @@
           "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
           "actor": "module"
         }
+      },
+      {
+        "name": "did-owner",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:example:123456789abcdefghi",
+            "device_key_hash": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+          },
+          "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b"
+        }
       }
     ],
     "invalid": [
@@ -47,6 +58,29 @@
             "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
           },
           "sponsor_pkh": "5b"
+        }
+      },
+      {
+        "name": "owner-extra-key",
+        "why": "owner is closed (400 OWNER_CREDENTIAL_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+            "label": "x"
+          },
+          "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b"
+        }
+      },
+      {
+        "name": "did-owner-without-did-prefix",
+        "why": "owner.did starts with did: (400 OWNER_DID_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "example:123"
+          },
+          "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b"
         }
       }
     ]

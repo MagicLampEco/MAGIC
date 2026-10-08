@@ -47,6 +47,23 @@
             "x"
           ]
         }
+      },
+      {
+        "name": "unknown-top-level-key",
+        "why": "The quote body is closed: route, params, owner_fee_addresses (400 FEE_QUOTE_SHAPE).",
+        "body": {
+          "route": "consume",
+          "params": {},
+          "source": "feecover"
+        }
+      },
+      {
+        "name": "route-outside-enum",
+        "why": "route is one of the build routes the service issues (400 FEE_QUOTE_ROUTE_UNKNOWN).",
+        "body": {
+          "route": "withdraw-lamp",
+          "params": {}
+        }
       }
     ]
   },

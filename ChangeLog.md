@@ -16,8 +16,27 @@ cả `/tx/consume`) và cùng bộ kiểm (`consumeLine.ts` ▸ `consumeLineOf`)
 cho một cặp: `ConsumeMany` đã chạy trên két Prepaid ở `MagicSDK/tests/sponsorJourney.test.ts`; giới hạn cũ chỉ là chữ
 ký của bộ dựng SDK.
 **Cái gì gãy.** Không gì ở dạng cũ. `required` của first-consume nhiều cặp khác `required` của một cặp gộp: `draw-magic`
-phải rút đủ theo `required` của dạng được gửi. Hợp đồng module (`contract/openapi.json`, PR chưa gộp) còn khai
-`FirstConsumeRequest` bắt buộc `op_type`/`op_count` — cần sửa khi PR đó gộp.
+phải rút đủ theo `required` của dạng được gửi. Hợp đồng module nay khớp: `contract/openapi.json` ▸ `FirstConsumeRequest` nhận
+`op_type`+`op_count` HOẶC `pairs` (`oneOf`, lược đồ `ConsumePairs` dùng chung với `ConsumeRequest`), bảng mã lỗi thêm
+route `/tx/sponsor/first-consume` cho các mã `CONSUME_PAIR*`, vector first-consume có ca `pairs` hợp lệ và bốn ca bị
+bác. `info.version` 1.0.0 → 1.1.0 (khoá yêu cầu tuỳ chọn mới = minor, `contract/compatibility.md` §4). Module chỉ gửi
+`op_type`+`op_count` không bị ảnh hưởng.
+
+## 2026-10-07 — VaultTxAPI: hợp đồng cho module backend (`VaultTxAPI/contract/`) và bài kiểm ghim nó vào mã
+
+**Đổi gì.** Thêm `VaultTxAPI/contract/`: `openapi.json` (OpenAPI 3.1, chín route module gọi), `error-codes.json`
+(bảng mã lỗi, mỗi mã một trạng thái + route), `vectors/*.json` (mẫu lời đáp hợp lệ và mẫu bị bác kèm lý do, mười tệp),
+`compatibility.md` (luật tương thích). Thêm `tests/moduleContract.test.ts` (đối chiếu vector với lược đồ, lời đáp của
+router thật với lược đồ, mã lỗi trong `src/` với bảng), `tests/schemaSubset.test.ts` + `tests/support/schemaSubset.ts`
+(bộ kiểm lược đồ nhỏ tự viết, không thêm dependency), và móc một dòng ở `feeQuote.test.ts` (lời đáp `/tx/quote`) và
+`sponsorEmulator.test.ts` (lời đáp `/tx/sponsor/first-consume`). README VaultTxAPI trỏ tới `contract/` và bổ sung hai
+mã còn thiếu trong bảng lỗi (`404 NOT_FOUND`, `400 SPONSOR_VAULT_REF_MISMATCH`). Không đổi hành vi route nào.
+**Vì sao.** Module backend ngoài đang đọc lời đáp theo trí nhớ của người viết nó; một bản phát hành thêm
+`fee_payer.reservation_id` mà bộ đọc từ chối khoá lạ đã làm module trả 502 cho chính người dùng của nó. Luật phải nằm ở
+một chỗ chạy được: lời đáp MỞ, yêu cầu ĐÓNG ở `fee_payer` và `pairs`, đổi hợp đồng + vector + bài kiểm trong cùng PR.
+**Cái gì gãy.** Không gãy gì ở thời chạy. Từ nay PR nào đổi hình dạng một lời đáp hay một mã lỗi mà module thấy sẽ đỏ
+`moduleContract.test.ts` cho tới khi sửa `contract/` cùng lúc. Module nào chọn lại từng khoá của `fee_payer` thay vì
+chuyển nguyên khối sẽ nhận `400 FEE_PAYER_SHAPE` khi dịch vụ thêm khoá mới: luật ở `contract/compatibility.md` §3.
 
 ## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
 

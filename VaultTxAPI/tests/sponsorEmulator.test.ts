@@ -62,6 +62,7 @@ import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { VaultTxService } from "../src/service.js";
 import { createPlatformSigner } from "../src/platformSigner.js";
 import { SponsorTxService, checkSponsorFeePayerTx, type SponsorFeePayerCheckContext } from "../src/sponsor.js";
+import { expectMatchesContract } from "./support/contract.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID } from "./fixtures/preview.js";
 
 // ── Lưới + hằng ───────────────────────────────────────────────────────────────
@@ -320,6 +321,8 @@ const ownerBody = () => ({ owner: { type: "key", hash: owner.pkh }, change_addre
 async function step(path: string, body: Body): Promise<Body> {
   const r = await post(path, body);
   if (r.status !== 200) throw new Error(`${path} ⟹ ${r.status} ${JSON.stringify(r.body)}`);
+  // Hợp đồng module: lời đáp THẬT của first-consume (trên script thật) khớp `contract/openapi.json`.
+  if (path === "/tx/sponsor/first-consume") expectMatchesContract("POST /tx/sponsor/first-consume", r.status, r.body);
   return r.body;
 }
 

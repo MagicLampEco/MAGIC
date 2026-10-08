@@ -1941,10 +1941,13 @@ export class SponsorTxService {
 
   private assertNotPendingSpent(u: UTxO, subject: string): void {
     const ref = refStr(u);
-    if (this.deps.pending?.has(ref, this.now())) {
+    const spender = this.deps.pending?.spenderOf(ref, this.now());
+    if (spender !== undefined) {
       throw new CodedApiError(409, "PREVIOUS_TX_PENDING",
         `Giao dịch trước của ${subject} đã nộp nhưng chưa vào khối — UTxO ${ref} đang bị nó tiêu. ` +
-        `Thử lại sau khi giao dịch đó vào khối.`, { utxo_ref: ref });
+        `Nếu đó là giao dịch bạn đã nộp cho cùng thao tác thì thao tác đang chạy: tra GET /tx/status/<hash>, ` +
+        `đừng dựng lại. Nếu không, thử lại sau khi giao dịch đó vào khối.`,
+        { utxo_ref: ref, pending_tx_hash: spender });
     }
   }
 

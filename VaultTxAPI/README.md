@@ -4,6 +4,11 @@ App là React Native trên Hermes. **Hermes không có WebAssembly**, mà bộ d
 (`@lucid-evolution/lucid`) là WASM — nên app không dựng nổi giao dịch tại chỗ. Dịch vụ này
 là lớp trung gian: nó dựng, app ký, app nộp lại qua đây.
 
+> **Hợp đồng cho module backend ngoài (gọi VaultTxAPI để consume MAGIC):** `contract/`. `openapi.json` là lược đồ
+> chín route; `error-codes.json` là bảng mã lỗi; `vectors/` là mẫu lời đáp hợp lệ và bị bác; `compatibility.md` là
+> luật tương thích (lời đáp mở, yêu cầu đóng ở `fee_payer` và `pairs`, khi nào tăng bản chính). Bài
+> `tests/moduleContract.test.ts` chạy cả ba trên router thật. README này KHÔNG chép lại chúng.
+
 ---
 
 ## 1. 🔴 Bất biến số một
@@ -1636,7 +1641,7 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
 | open-fund | không trường riêng nào — DID từ thread, phần còn lại từ cấu hình (mục "Tạo quỹ tài trợ cho một DID") |
 | T2 | `fund_id` (tuỳ chọn — vắng ⟹ dịch vụ tìm quỹ của DID), `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
 | T3 | `fund_id`, `carp_amount`, `vault_ref` (tuỳ chọn) |
-| T4 | `op_type`, `op_count`, `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
+| T4 | `op_type`+`op_count` HOẶC `pairs` (1..8 cặp, như `/tx/consume`), `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
 
 **T2 chi tiền bên tài trợ ⟹ mọi thứ quyết tiền lấy từ CẤU HÌNH, không từ thân bài.**
 
@@ -1754,6 +1759,7 @@ của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người g�
 | `SPONSOR_VALIDITY_SPANS_EPOCHS` | 422 | đang sát biên kỳ; thử lại sau biên |
 | `SPONSOR_CARP_INSUFFICIENT` · `SPONSOR_FUND_NOT_PINNED` | 422 | UTxO bên tài trợ không đủ CARP / quỹ không đúng quỹ đã ghim |
 | `SPONSOR_FUND_NOT_ALLOWED` · `SPONSOR_CARP_ABOVE_CAP` | 422 | `fund_id` ngoài gốc tin cậy hoặc quỹ không dùng được / `carp_amount` vượt `max_carp_amount` |
+| `SPONSOR_VAULT_REF_MISMATCH` | 400 | `vault_ref` (first-consume) không phải két Prepaid chưa tiêu của chủ này (`details.vault_ref`) |
 | `SPONSOR_VAULT_DID_*` · `SPONSOR_FUND_NOT_OPENED` · `SPONSOR_FUND_AMBIGUOUS` · `SPONSOR_FUND_DID_MISMATCH` | 409/422 | quỹ / két theo DID — bảng ở mục "Mỗi DID một quỹ tài trợ" |
 | `SPONSOR_UTXO_NOT_ALLOWED` · `SPONSOR_UTXO_NO_CARP` | 422 | `utxo_refs` không chung một địa chỉ đã ghim / có UTxO không mang CARP |
 | `SPONSOR_UTXO_NOT_KEY` | 400 | UTxO bên tài trợ không do khoá giữ |
@@ -1852,7 +1858,7 @@ Nên:
 | `wakeme_vault_ref` không phải két đã nối (`wakeme_link` rỗng hoặc khác) và lượt này không nối/đổi link được, luật 6 (`details.wakeme_link`, `details.owner_commit`, `details.next_route`) — chạy `/tx/refresh-checkpoint` trước | `422 WAKEME_LINK_CHANGE_REJECTED` |
 | chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
-| `/tx/consume`: `pairs` đi cùng `op_type`/`op_count` | `400 CONSUME_PAIRS_CONFLICT` |
+| `/tx/consume` và `/tx/sponsor/first-consume`: `pairs` đi cùng `op_type`/`op_count` | `400 CONSUME_PAIRS_CONFLICT` |
 | `pairs` không phải mảng / phần tử sai hình (null, mảng, khoá lạ) | `400 CONSUME_PAIRS_SHAPE` |
 | `pairs` rỗng / quá 8 cặp | `400 CONSUME_PAIRS_EMPTY` / `400 CONSUME_PAIRS_TOO_MANY` |
 | `op_type` không tăng ngặt (kể cả trùng) | `400 CONSUME_PAIRS_NOT_INCREASING` |
@@ -1898,6 +1904,7 @@ Nên:
 | xin `source: "sponsor"` mà Feecover trả lời không kèm `source`; hoặc Feecover trả `source` khác nguồn đã xin (vắng = `feecover`) ở `/fee/utxo` / `/fee/sign` | `502 FEE_SOURCE_NOT_CONFIRMED` (`details.source`, `details.confirmed_source` khi Feecover có trả) |
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
+| đường (path) không có trong dịch vụ | `404 NOT_FOUND` |
 | method sai | `405 METHOD_NOT_ALLOWED` |
 | nộp một tx đã bị tx khác chung khoá (đã NỘP) thay, hoặc input đã bị tx vừa nộp tiêu | `409 TX_SUPERSEDED` (`details.superseded_by` / `details.conflicting_inputs`, kèm `details.submission` + `details.previously_submitted`) — **không** chứng minh tx chưa lên chuỗi (§4) |
 | nộp lại một tx nút đã NHẬN, chưa bị thay | `200` với **đúng** kết quả lượt đầu; **không** gửi lên chuỗi lần nữa (§4) |

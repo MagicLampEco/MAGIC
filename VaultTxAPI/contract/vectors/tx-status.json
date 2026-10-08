@@ -1,0 +1,159 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "GET /tx/status/{tx_hash}",
+  "responses": {
+    "valid": [
+      {
+        "name": "in-chain",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "in_chain",
+          "block": "1414141414141414141414141414141414141414141414141414141414141414",
+          "slot": 108806400,
+          "block_time": "2026-09-11T04:13:20.000Z"
+        }
+      },
+      {
+        "name": "in-mempool",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "in_mempool"
+        }
+      },
+      {
+        "name": "not-found",
+        "status": 200,
+        "body": {
+          "tx_hash": "abababababababababababababababababababababababababababababababab",
+          "state": "not_found"
+        },
+        "note": "not_found is the node's real answer, HTTP 200. A provider failure is 502, never this."
+      },
+      {
+        "name": "not-found-issued-by-this-service",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "not_found",
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        },
+        "note": "expires_at and server_time appear for a transaction this service issued and remembers."
+      },
+      {
+        "name": "additive-key",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "in_mempool",
+          "seen_by_nodes": 3
+        },
+        "note": "Unknown keys are additive."
+      },
+      {
+        "name": "bad-hash",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "TX_HASH_INVALID",
+            "message": "tx_hash must be 64 lowercase hex.",
+            "details": {
+              "received_length": 2
+            }
+          }
+        }
+      },
+      {
+        "name": "provider-down",
+        "status": 502,
+        "body": {
+          "error": {
+            "code": "TX_STATUS_PROVIDER_UNAVAILABLE",
+            "message": "Provider failed.",
+            "details": {
+              "stage": "mempool"
+            }
+          }
+        },
+        "note": "The module must treat this as 'unknown', not as not_found: concluding 'never landed' from it books a debt on a transaction that may be in a block."
+      }
+    ],
+    "invalid": [
+      {
+        "name": "state-outside-closed-set",
+        "status": 200,
+        "why": "state is in_chain, in_mempool or not_found; a new state means the reader cannot decide what to do.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "pending"
+        }
+      },
+      {
+        "name": "state-missing",
+        "status": 200,
+        "why": "state is the answer.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+        }
+      },
+      {
+        "name": "tx-hash-63-hex",
+        "status": 200,
+        "why": "tx_hash is exactly 64 hex characters.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456f",
+          "state": "in_mempool"
+        }
+      },
+      {
+        "name": "slot-as-string",
+        "status": 200,
+        "why": "slot is a JSON integer (a slot number, not an amount).",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "in_chain",
+          "block": "1414141414141414141414141414141414141414141414141414141414141414",
+          "slot": "108806400",
+          "block_time": "2026-09-11T04:13:20.000Z"
+        }
+      },
+      {
+        "name": "block-hash-uppercase",
+        "status": 200,
+        "why": "block is lowercase hex.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "in_chain",
+          "block": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+          "slot": 108806400,
+          "block_time": "2026-09-11T04:13:20.000Z"
+        }
+      },
+      {
+        "name": "block-time-as-number",
+        "status": 200,
+        "why": "block_time is ISO 8601.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "in_chain",
+          "block": "1414141414141414141414141414141414141414141414141414141414141414",
+          "slot": 108806400,
+          "block_time": 1789100000
+        }
+      },
+      {
+        "name": "expires-at-as-number",
+        "status": 200,
+        "why": "expires_at is ISO 8601.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "state": "not_found",
+          "expires_at": 1789101303000,
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      }
+    ]
+  }
+}

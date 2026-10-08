@@ -1,0 +1,167 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "POST /tx/submit",
+  "requests": {
+    "valid": [
+      {
+        "name": "tx-and-witnesses",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "witness_cbor": "a100"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "witness-missing",
+        "why": "witness_cbor is required.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6"
+        }
+      },
+      {
+        "name": "witness-not-hex",
+        "why": "witness_cbor is lowercase hex.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "witness_cbor": "zz"
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "accepted",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "lock_released_for": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+        }
+      },
+      {
+        "name": "lock-already-released",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "lock_released_for": null
+        },
+        "note": "null when no lock carried the hash, which is also the answer to a repeated submit of an accepted transaction."
+      },
+      {
+        "name": "additive-key",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "lock_released_for": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+          "node": "a"
+        },
+        "note": "Unknown keys are additive."
+      },
+      {
+        "name": "witness-signature-invalid",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "WITNESS_SIGNATURE_INVALID",
+            "message": "A signature does not match the body.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "witness-missing-signer",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "WITNESS_MISSING_SIGNER",
+            "message": "A required signer has no witness.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "superseded",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "TX_SUPERSEDED",
+            "message": "Superseded.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+              "superseded_by": "abababababababababababababababababababababababababababababababab",
+              "previously_submitted": false,
+              "submission": "none"
+            }
+          }
+        }
+      },
+      {
+        "name": "expired",
+        "status": 410,
+        "body": {
+          "error": {
+            "code": "TX_EXPIRED",
+            "message": "Expired.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+              "expired_at": "2026-09-11T04:35:03.000Z",
+              "rebuild_safe": false,
+              "submission": "unconfirmed"
+            }
+          }
+        },
+        "note": "rebuild_safe=false: the transaction was sent once; check the chain by tx_hash before rebuilding."
+      },
+      {
+        "name": "node-rejected",
+        "status": 502,
+        "body": {
+          "error": {
+            "code": "SUBMIT_REJECTED",
+            "message": "The node said: input already spent.",
+            "details": {
+              "node": "blockfrost"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "tx-hash-missing",
+        "status": 200,
+        "why": "tx_hash is guaranteed.",
+        "body": {
+          "lock_released_for": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+        }
+      },
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "why": "tx_hash is lowercase hex.",
+        "body": {
+          "tx_hash": "4F27C87C6488ADFCE6A63AFE9BCFA68AF02A3E72188D8013FBC6E175284456FF",
+          "lock_released_for": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+        }
+      },
+      {
+        "name": "lock-released-for-missing",
+        "status": 200,
+        "why": "lock_released_for is always present (null when none).",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+        }
+      },
+      {
+        "name": "lock-released-for-number",
+        "status": 200,
+        "why": "lock_released_for is a string or null.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "lock_released_for": 1
+        }
+      }
+    ]
+  }
+}

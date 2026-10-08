@@ -1,0 +1,145 @@
+{
+  "contract_version": "1.1.0",
+  "schema": "ErrorResponse",
+  "description": "Every non-2xx answer of every route.",
+  "responses": {
+    "valid": [
+      {
+        "name": "unauthorized",
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "UNAUTHORIZED",
+            "message": "Missing or wrong token.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "details-carry-facts",
+        "status": 410,
+        "body": {
+          "error": {
+            "code": "TX_EXPIRED",
+            "message": "Transaction expired.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+              "expired_at": "2026-09-11T04:35:03.000Z",
+              "rebuild_safe": true,
+              "submission": "none"
+            }
+          }
+        }
+      },
+      {
+        "name": "internal-with-reference",
+        "status": 500,
+        "body": {
+          "error": {
+            "code": "INTERNAL",
+            "message": "Internal error.",
+            "details": {
+              "reference_code": "ref_0123456789ab"
+            }
+          }
+        }
+      },
+      {
+        "name": "unknown-code-is-still-an-envelope",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SOME_FUTURE_CODE",
+            "message": "A code added after this contract.",
+            "details": {
+              "anything": [
+                1,
+                2
+              ]
+            }
+          }
+        },
+        "note": "New codes are additive. A reader branches on the HTTP status class when the code is unknown; it does not reject the response."
+      },
+      {
+        "name": "additive-key-in-error-body",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "BAD_REQUEST",
+            "message": "x",
+            "details": {},
+            "hint": "new key"
+          },
+          "request_id": "r1"
+        },
+        "note": "Unknown keys next to or inside error are additive."
+      }
+    ],
+    "invalid": [
+      {
+        "name": "error-is-a-string",
+        "status": 500,
+        "why": "error must be an object { code, message, details }; a bare string cannot be branched on.",
+        "body": {
+          "error": "boom"
+        }
+      },
+      {
+        "name": "missing-details",
+        "status": 400,
+        "why": "details is part of the envelope (an empty object when there is nothing to say).",
+        "body": {
+          "error": {
+            "code": "BAD_REQUEST",
+            "message": "x"
+          }
+        }
+      },
+      {
+        "name": "details-is-array",
+        "status": 400,
+        "why": "details must be an object.",
+        "body": {
+          "error": {
+            "code": "BAD_REQUEST",
+            "message": "x",
+            "details": []
+          }
+        }
+      },
+      {
+        "name": "code-not-machine-form",
+        "status": 400,
+        "why": "code is UPPER_SNAKE_CASE; a lowercase or spaced code is not from this service (a proxy page, for example).",
+        "body": {
+          "error": {
+            "code": "bad request",
+            "message": "x",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "missing-error-key",
+        "status": 404,
+        "why": "A body without the error key is not this service's envelope (an upstream proxy answered).",
+        "body": {
+          "detail": "Not Found"
+        }
+      },
+      {
+        "name": "message-not-string",
+        "status": 400,
+        "why": "message must be a string.",
+        "body": {
+          "error": {
+            "code": "BAD_REQUEST",
+            "message": 7,
+            "details": {}
+          }
+        }
+      }
+    ]
+  }
+}

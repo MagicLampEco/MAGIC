@@ -1,0 +1,577 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "POST /tx/quote",
+  "requests": {
+    "valid": [
+      {
+        "name": "consume-with-owner-addresses",
+        "body": {
+          "route": "consume",
+          "params": {
+            "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+            "op_type": 1,
+            "op_count": "2"
+          },
+          "owner_fee_addresses": [
+            "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+          ]
+        }
+      },
+      {
+        "name": "consume-minimal",
+        "body": {
+          "route": "consume",
+          "params": {
+            "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+            "op_type": 1,
+            "op_count": "2"
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "params-missing",
+        "why": "params is required.",
+        "body": {
+          "route": "consume"
+        }
+      },
+      {
+        "name": "owner-fee-addresses-not-addresses",
+        "why": "owner_fee_addresses are bech32 addresses.",
+        "body": {
+          "route": "consume",
+          "params": {},
+          "owner_fee_addresses": [
+            "x"
+          ]
+        }
+      },
+      {
+        "name": "unknown-top-level-key",
+        "why": "The quote body is closed: route, params, owner_fee_addresses (400 FEE_QUOTE_SHAPE).",
+        "body": {
+          "route": "consume",
+          "params": {},
+          "source": "feecover"
+        }
+      },
+      {
+        "name": "route-outside-enum",
+        "why": "route is one of the build routes the service issues (400 FEE_QUOTE_ROUTE_UNKNOWN).",
+        "body": {
+          "route": "withdraw-lamp",
+          "params": {}
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "both-sources-available",
+        "status": 200,
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "feecover-unreachable",
+        "status": 200,
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": false,
+            "reason": "FEE_QUOTE_FEECOVER_TIMEOUT"
+          },
+          "owner_address": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": false,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "reason": "FEE_QUOTE_OWNER_ADDRESSES_ABSENT"
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": false,
+              "reason": "FEE_QUOTE_OWNER_ADDRESSES_ABSENT"
+            },
+            "feecover": {
+              "available": false,
+              "reason": "FEE_QUOTE_FEECOVER_TIMEOUT",
+              "message": "Feecover did not answer."
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_FEECOVER_TIMEOUT",
+              "message": "Feecover did not answer."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        },
+        "note": "Feecover not answering is NOT an error response: the quote still returns, with available=false and a reason."
+      },
+      {
+        "name": "additive-key-in-source-block",
+        "status": 200,
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true,
+              "balance_band": "high"
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        },
+        "note": "fee_sources blocks are Feecover's answer relayed; Feecover may add keys, and they arrive here."
+      },
+      {
+        "name": "additive-top-level",
+        "status": 200,
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z",
+          "summary": {
+            "max_m_nanogic": "1"
+          }
+        },
+        "note": "route instant-gen adds summary; an unknown key at any level is additive."
+      },
+      {
+        "name": "bad-quote-shape",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "FEE_QUOTE_SHAPE",
+            "message": "Malformed quote body.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "fee-payer-in-params",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "FEE_QUOTE_FEE_PAYER_IN_PARAMS",
+            "message": "params must not carry fee_payer.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "params-error-keeps-build-code",
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "VAULT_NOT_FOUND",
+            "message": "The owner has no vault.",
+            "details": {}
+          }
+        },
+        "note": "Errors of params are the build route's own codes, not wrapped."
+      }
+    ],
+    "invalid": [
+      {
+        "name": "fee-sources-missing",
+        "status": 200,
+        "why": "fee_sources is guaranteed.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "feecover-available-as-string",
+        "status": 200,
+        "why": "available is a boolean.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": "true"
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "fee-lovelace-as-number",
+        "status": 200,
+        "why": "Amounts are digit strings.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": 175016,
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "fronted-lovelace-missing",
+        "status": 200,
+        "why": "fronted_lovelace is always present; \"0\" is a measured value, not a gap.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "owner-needed-missing",
+        "status": 200,
+        "why": "needed_lovelace is guaranteed in owner_address.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "owner-fee-payer-without-address",
+        "status": 200,
+        "why": "owner_address.fee_payer is shaped like the build request's fee_payer.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "source-block-without-available",
+        "status": 200,
+        "why": "Every fee_sources block states available.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "valid-until-missing",
+        "status": 200,
+        "why": "valid_until bounds how long the quote holds.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          }
+        }
+      },
+      {
+        "name": "valid-until-as-number",
+        "status": 200,
+        "why": "valid_until is ISO 8601.",
+        "body": {
+          "feecover": {
+            "fee_lovelace": "175016",
+            "fronted_lovelace": "0",
+            "available": true
+          },
+          "owner_address": {
+            "fee_lovelace": "172552",
+            "fronted_lovelace": "0",
+            "available": true,
+            "needed_lovelace": "3969750",
+            "collateral_lovelace": "3000000",
+            "fee_payer": {
+              "utxo": "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e#0",
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+            }
+          },
+          "fee_sources": {
+            "owner_address": {
+              "available": true
+            },
+            "feecover": {
+              "available": true
+            },
+            "sponsor": {
+              "available": false,
+              "reason": "FEE_QUOTE_SPONSOR_NOT_REPORTED",
+              "message": "Feecover did not report a sponsor block."
+            }
+          },
+          "valid_until": 1789101303000
+        }
+      }
+    ]
+  }
+}

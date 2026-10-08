@@ -12,13 +12,16 @@ credential, output tiếp nối vẫn ghim địa chỉ đầy đủ. (2) `valid
 `validate_mint_fund_nft` lọc output theo SCRIPT trước (đúng một), rồi mới đòi NFT trên output đó. (3) `paid_fund`:
 `fund_common_checks` ép đúng một output ở script quỹ; `validate_fund_close` và `validate_fund_claim_close` ép không
 output nào ở script quỹ. (4) `validate_vault_value` ở `InstantGen`/`ScheduleGen` đòi đúng một tên dưới policy két
-(`single_nft_name`), đóng phần policy-két của Nợ #57. Ca kiểm tiền tố `g3v_` trong ba tệp validator.
+(`single_nft_name`), đóng phần policy-két của Nợ #57. (5) `ScheduleGen` ▸ `validator shard`: ép đúng một output ở script shard (SHARD-OUT-0, Nợ #97). Ca kiểm
+tiền tố `g3v_` trong ba tệp validator, `r169_` cho shard; thêm ca âm ghim chốt NFT ở genesis (`InstantGen`,
+`ScheduleGen`) và chốt địa chỉ đầy đủ của két tiếp nối (`PrepaidGen`) — hai chốt đó trước đây gỡ đi không bài nào đỏ.
 **Vì sao.** Mỗi lỗ để một giao dịch chạy script két/quỹ đẻ ra một UTxO ở script đó mà không nhánh nào tiêu lại được
-(tài sản rót vào địa chỉ, không vào dòng sổ), hoặc (4) làm két mang hai tên NFT và chết vĩnh viễn. Cả bốn đã dựng
-được bằng ca kiểm trên mã cũ (giao dịch được nhận). Chi tiết: `DevStatus.md` Nợ #57, #94–#96.
+(tài sản rót vào địa chỉ, không vào dòng sổ), hoặc (4) làm két mang hai tên NFT và chết vĩnh viễn. Cả năm đã dựng
+được bằng ca kiểm trên mã cũ (giao dịch được nhận). Chi tiết: `DevStatus.md` Nợ #57, #94–#97.
 **Cái gì gãy.** Script hash ĐỔI: `prepaid_vault`, `paid_fund`, `vault` (InstantGen), `vault` và `commit`
-(ScheduleGen); `shard`/`shard_nft` của ScheduleGen giữ nguyên. Hiệu lực từ lần deploy kế, không hồi tố UTxO đang
-sống. Bộ dựng giao dịch nào đặt thêm output ở địa chỉ két/quỹ (kể cả khác stake) trong cùng giao dịch sẽ bị từ chối.
+(ScheduleGen), và `shard` (ScheduleGen, bản vá (5)); `shard_nft` giữ nguyên. `vault`/`commit` không đổi theo
+`shard` vì chúng nhận `shard_policy_id`, không nhận hash script shard. Hiệu lực từ lần deploy kế, không hồi tố UTxO đang
+sống. Bộ dựng giao dịch nào đặt thêm output ở địa chỉ két/quỹ/shard (kể cả khác stake) trong cùng giao dịch sẽ bị từ chối.
 
 ## 2026-10-07 — VaultTxAPI: hợp đồng cho module backend (`VaultTxAPI/contract/`) và bài kiểm ghim nó vào mã
 

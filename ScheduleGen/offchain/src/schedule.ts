@@ -185,6 +185,11 @@ export interface FireParams {
   refScriptUtxos? : UTxO[];
   /** Xem `CommitParams.collateralLovelace`. */
   collateralLovelace?: bigint;
+  /** Danh sách UTxO ví mà `complete()` được phép dùng cho CẢ input trả phí LẪN thế chấp
+   *  (`presetWalletInputs` của Lucid). Bỏ trống ⟹ Lucid lấy mọi UTxO ví và thế chấp rơi vào UTxO
+   *  lớn nhất, kể cả khi nó mang token (`CollateralContainsNonADA`). Keeper truyền tập thuần ADA —
+   *  `scripts/keeper/collateral.ts`. Fire không cần token nào từ ví nên lọc là an toàn. */
+  walletInputs?: UTxO[];
 }
 
 export interface FireResult {
@@ -486,7 +491,10 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
     .validTo(upperTime)
-    .complete(collateralCompleteOptions(params.collateralLovelace));
+    .complete({
+      ...collateralCompleteOptions(params.collateralLovelace),
+      ...(params.walletInputs ? { presetWalletInputs: params.walletInputs } : {}),
+    });
 
   const newFired = sched.fired_count + BigInt(plan.firesInTx);
   const late = currentEpoch - plan.firstNominalEpoch;

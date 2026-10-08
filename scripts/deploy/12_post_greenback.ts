@@ -48,6 +48,7 @@ import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { parseFlag, parseOutRef } from "../runResult.js";
 import { stateBookPath } from "../stateBookPath.js";
 import { bookToRecord, readBookEntries } from "./11_deploy_gen_beacons.js";
+import { pureAdaCompleteOptions } from "../keeper/collateral.js";
 import { formatBeaconRef, greenbackSubmitGate, parseExpectBeaconRef, type GreenBackNotSentCode } from "../keeper/greenback.js";
 
 export const GREENBACK_SEED_KEY = "GEN_BEACONS_GREENBACK_SEED_UTXO";
@@ -128,7 +129,9 @@ async function main(): Promise<void> {
   });
   if (!gate.ok) throw new NotSentError(gate.code, gate.message);
 
-  const built = await tx.complete();
+  // Thế chấp chỉ-ADA: `tx.complete()` trần để Lucid lấy UTxO ví lớn nhất làm thế chấp, kể cả khi nó
+  // mang token ⟹ `CollateralContainsNonADA` (ca thật 2026-10-08). Xem `keeper/collateral.ts`.
+  const built = await tx.complete(await pureAdaCompleteOptions(lucid));
   if (dryRun) {
     console.log(`\n✔ DRY RUN: tx dựng xong, validator qua khi dựng. Hash thân (chưa gửi): ${built.toHash()}`);
     console.log("GREENBACK_BEACON_NOT_SENT=dry-run");

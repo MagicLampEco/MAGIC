@@ -5,7 +5,7 @@ App là React Native trên Hermes. **Hermes không có WebAssembly**, mà bộ d
 là lớp trung gian: nó dựng, app ký, app nộp lại qua đây.
 
 > **Hợp đồng cho module backend ngoài (gọi VaultTxAPI để consume MAGIC):** `contract/`. `openapi.json` là lược đồ
-> chín route; `error-codes.json` là bảng mã lỗi; `vectors/` là mẫu lời đáp hợp lệ và bị bác; `compatibility.md` là
+> mười lăm route (chín của hành trình consume và báo giá, cộng sáu route tài trợ `/tx/sponsor/{open-vault,bind-did,open-fund,fund-vault,draw-magic,claim}`; `/tx/sponsor/first-consume` đã nằm trong chín); `error-codes.json` là bảng mã lỗi; `vectors/` là mẫu lời đáp hợp lệ và bị bác; `compatibility.md` là
 > luật tương thích (lời đáp mở, yêu cầu đóng ở `fee_payer` và `pairs`, khi nào tăng bản chính). Bài
 > `tests/moduleContract.test.ts` chạy cả ba trên router thật. README này KHÔNG chép lại chúng.
 

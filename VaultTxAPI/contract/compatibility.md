@@ -57,7 +57,7 @@ These request objects refuse unknown keys:
 
 | Object | Refusal |
 |---|---|
-| `fee_payer` (in `POST /tx/consume` and `POST /tx/sponsor/first-consume`) | `400 FEE_PAYER_SHAPE`, `details.extra_fields` lists the keys |
+| `fee_payer` (in `POST /tx/consume` and every `POST /tx/sponsor/*` route that reads it) | `400 FEE_PAYER_SHAPE`, `details.extra_fields` lists the keys |
 | each element of `pairs` | `400 CONSUME_PAIRS_SHAPE` |
 | `owner`: `{type: key or script, hash}`, or `{type: did, did, device_key_hash?}` | `400 OWNER_CREDENTIAL_SHAPE`, `details.extra_fields` lists the keys |
 | the `POST /tx/quote` body (`route`, `params`, `owner_fee_addresses`) | `400 FEE_QUOTE_SHAPE`, `details.extra_fields` lists the keys |
@@ -109,7 +109,7 @@ A change to behaviour a module sees updates, in the SAME pull request:
 3. `vectors/`: the valid sample that shows the new behaviour and, when something is now refused, the refused
    sample with its reason (`contract_version` in every vector file equals `info.version`);
 4. the tests in `tests/moduleContract.test.ts` (and the hooks in `feeQuote.test.ts` and
-   `sponsorEmulator.test.ts` that check the two routes needing heavier setup against the same schemas).
+   `sponsorEmulator.test.ts` that check the routes needing heavier setup (`/tx/quote` and the seven `/tx/sponsor/*` routes) against the same schemas and the same error table).
 
 A pull request that changes the routes without these is incomplete: the contract is the thing a module
 developer reads, and a stale contract is worse than none.

@@ -53,6 +53,8 @@
 //   PREPAID_REFS_ONLY=1 — chỉ công bố hai ref-script (bước R), KHÔNG genesis. Dùng khi chạy
 //                       lại sau khi genesis đã xong mà ref-script chưa đỗ: genesis KHÔNG
 //                       idempotent (mỗi lượt đúc một quỹ + một két mới), ref-script thì có.
+//   DEPLOY_EXPECT_HASHES — tệp JSON hash kỳ vọng (`clusterHashes.ts --out`, `deploySeeds.ts`); so
+//                       paid_fund · vault_prepaid ngay sau khi apply, lệch ⟹ ném trước MỌI tx.
 //   DRY_RUN=1         — tính hash, đọc bãi đỗ, DỰNG tx công bố cho cái còn thiếu để đo
 //                       kích thước; KHÔNG ký, KHÔNG gửi, KHÔNG genesis, KHÔNG in dòng cho sổ.
 //
@@ -82,7 +84,9 @@ import {
   PROTOCOL, requireCarpIdentity,
 } from "../config.js";
 import { loadBlueprint } from "../applyParams.js";
-import { prepaidScriptPair, prepaidRefScriptPlan, type PaidFundParamInputs } from "../deployParams.js";
+import { prepaidRefScriptPlan, type PaidFundParamInputs } from "../deployParams.js";
+import { prepaidPairChecked } from "../deployHashChecks.js";
+import { loadExpectedHashes, requireExpectInPresetMode } from "../deploySeeds.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
 import { minAdaForRefScriptWithMargin } from "../minAda.js";
 import { parseFlag } from "../runResult.js";
@@ -252,6 +256,11 @@ async function main() {
   assertCarpMatchesInstance(carp, carpInstance);
   console.log(`CARP khớp instance ${carpInstance.network} (deployedAt ${carpInstance.deployedAt ?? "?"})`);
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
+  // Hash kỳ vọng (`DEPLOY_EXPECT_HASHES`, `deploySeeds.ts`): so paid_fund · vault_prepaid TRƯỚC
+  // mọi tx (kể cả tx công bố ref-script). Chế độ seed cho trước mà vắng tệp ⟹ ném (trừ
+  // `DEPLOY_EXPECT_NONE=1`).
+  const expectHashes = loadExpectedHashes(process.env);
+  requireExpectInPresetMode("bước 10", process.env, expectHashes);
   const refsOnly = dryRun || parseFlag(process.env.PREPAID_REFS_ONLY, "PREPAID_REFS_ONLY");
   // `null` ⟺ chỉ chạy pha (R): đích nhận CARP không dùng tới, nên không đòi hai biến của nó.
   const beneficiary = refsOnly ? null : readBeneficiary();
@@ -327,7 +336,7 @@ async function main() {
     // Két Wakeme của mạng — nguồn duy nhất ProtocolUtils; mạng chưa có két ⟹ NÉM.
     wakemeVaultHash: wakemeVaultHash(NETWORK),
   };
-  const { fundScript, fundHash, vaultScript, vaultHash } = prepaidScriptPair(bp, carpParams);
+  const { fundScript, fundHash, vaultScript, vaultHash } = prepaidPairChecked(bp, carpParams, expectHashes);
   const fundAddress = credentialToAddress(NETWORK, scriptHashToCredential(fundHash));
   const vaultAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
 

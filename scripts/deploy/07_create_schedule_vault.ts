@@ -19,6 +19,10 @@
 //                          cho sổ. Vẫn in RESULT (dry_run:true).
 //   WRITE_STATE_BOOK     — "1"/"0": có in khối dòng cho sổ hay không. Vắng thì quyết theo
 //                          ví ký — xem `runResult.ts ▸ decideStateBook`.
+//   DEPLOY_EXPECT_HASHES — tệp JSON hash kỳ vọng (`clusterHashes.ts --out`, `deploySeeds.ts`);
+//                          so shard_nft (từ sổ) · commit · vault_schedule ngay sau khi apply,
+//                          lệch ⟹ ném trước mọi tx. Có biến DEPLOY_SEED_* nào mà vắng tệp ⟹
+//                          ném, trừ DEPLOY_EXPECT_NONE=1.
 //   (LAST_UPDATED_OFFSET / PRESEED_SCHEDULE_* đã BỎ — xem LEGACY_ENV bên dưới)
 //
 // Chủ vault LUÔN là khoá của ví ký (PRIVATE_KEY, hoặc WALLET_SEED khi không có
@@ -45,7 +49,9 @@ import {
 } from "../runResult.js";
 import { outputIndexWithUnit } from "../txOutputIndex.js";
 import { loadBlueprint } from "../applyParams.js";
-import { scheduleScriptPair, genV2BeaconRefsFromBook } from "../deployParams.js";
+import { genV2BeaconRefsFromBook } from "../deployParams.js";
+import { scheduleVaultChecked } from "../deployHashChecks.js";
+import { loadExpectedHashes, requireExpectInPresetMode } from "../deploySeeds.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 // Codec + hằng lấy từ GÓI NỀN, không chép lược đồ: bản chép cũ ở tệp này (17 trường) chết
 // im lặng đúng lúc v2.0 nối thêm hai trường. Lệch với validator thì `Data.to` vẫn chạy —
@@ -165,6 +171,10 @@ async function main() {
   }
   // Ba hash GenBeacons (bước 11 pha `beacons`). Thiếu ⟹ ném nêu tên khoá, không đệm.
   const beacons = genV2BeaconRefsFromBook(process.env);
+  // Hash kỳ vọng (`DEPLOY_EXPECT_HASHES`, `deploySeeds.ts`): so shard_nft · commit · vault_schedule
+  // TRƯỚC mọi tx. Chế độ seed cho trước mà vắng tệp ⟹ ném (trừ `DEPLOY_EXPECT_NONE=1`).
+  const expectHashes = loadExpectedHashes(process.env);
+  requireExpectInPresetMode("bước 07", process.env, expectHashes);
 
   console.log(`=== Step 7: Create ScheduleGen Vault UTxO (Gen v2.0)${dryRun ? " · DRY RUN" : ""} ===\n`);
 
@@ -183,14 +193,16 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
-  const pair = scheduleScriptPair(await loadBlueprint("ScheduleGen"), {
+  // `scheduleVaultChecked` so shard_nft (từ sổ) · commit · vault_schedule với tệp kỳ vọng ngay
+  // sau khi apply: lệch ⟹ ném ở đây, trước mọi tx.
+  const pair = scheduleVaultChecked(await loadBlueprint("ScheduleGen"), {
     lampPolicyId:  POLICY_IDS.lamp,
     lampAssetName: ASSET_NAMES.lamp,   // PARAM theo mạng, không hardcode
     shardPolicyId: POLICY_IDS.shard_nft,
     msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
     windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     ...beacons,
-  });
+  }, expectHashes);
 
   console.log(`Network:            ${NETWORK}`);
   console.log(`LAMP policy:        ${POLICY_IDS.lamp}`);

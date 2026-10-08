@@ -423,6 +423,67 @@ export function consumeParams(i: ConsumeParamInputs): ParamMap {
   };
 }
 
+/** Asset name của NFT giá: "PRICE" — `price_nft.ak`. Apply-param #2 của `price_param` và `consume`. */
+export const PRICE_NFT_NAME = "5052494345";
+
+// BurnBatch = constr 2 trong VaultRedeemer của CẢ HAI vault sinh MAGIC:
+//   InstantGen  — InstantGen/onchain/lib/magiclamp/protocol/types.ak ▸ VaultRedeemer ▸ BurnBatch (constr 2)
+//   ScheduleGen — ScheduleGen/onchain/lib/magiclamp/protocol/types.ak ▸ VaultRedeemer ▸ BurnBatch
+// Nên một giá trị dùng chung được. (Bản cũ của `scripts/README.md` nói hai module
+// khác constr — SAI, và cái sai đó làm việc dễ trông như việc khó.)
+export const BURN_BATCH_CONSTR = 2n;
+
+export interface ConsumeScriptChainInputs {
+  /** Seed one-shot của `price_nft` (g1 ở bước 09). */
+  priceNftSeed:    { txHash: string; outputIndex: number | bigint };
+  committee:       string[];
+  threshold:       bigint;
+  vaultScriptHash: string;
+  maxPriceStale:   bigint;
+  msPerEpoch:      bigint;
+  windowOriginMs:  bigint;
+}
+
+export interface ConsumeScriptChain {
+  priceNftScript: Validator; priceNftPolicy: string;
+  priceParamHash: string;
+  consumeScript:  Validator; consumeHash:    string;
+}
+
+/** Chuỗi bake TUYẾN TÍNH của một bản `consume`: price_nft(seed) → price_param → consume. Thuần:
+ *  nhận blueprint đã nạp (`loadBlueprint("ConsumeMAGIC")`). MỘT hàm cho bước 09 (dựng thật) và
+ *  `clusterHashes.ts` (tính trước) — hai nơi tự apply thì chỉ cần một nơi quên
+ *  `price_param_script_hash` là ra một hash consume hợp lệ khác nơi kia. */
+export function consumeScriptChain(bp: Blueprint, i: ConsumeScriptChainInputs): ConsumeScriptChain {
+  const priceNft = appliedScript(
+    findValidator(bp, "price_nft.price_nft.mint"),
+    oneShotGenesisParams({ txHash: i.priceNftSeed.txHash, outputIndex: i.priceNftSeed.outputIndex }),
+  );
+  const priceParam = appliedScript(findValidator(bp, "price_param.price_param.spend"), priceParamParams({
+    committee:      i.committee,
+    threshold:      i.threshold,
+    priceNftPolicy: priceNft.hash,
+    priceNftName:   PRICE_NFT_NAME,
+    msPerEpoch:     i.msPerEpoch,
+    windowOriginMs: i.windowOriginMs,
+  }));
+  const consume = appliedScript(findValidator(bp, "consume.consume.spend"), consumeParams({
+    priceNftPolicy:       priceNft.hash,
+    priceNftName:         PRICE_NFT_NAME,
+    vaultScriptHash:      i.vaultScriptHash,
+    burnBatchConstr:      BURN_BATCH_CONSTR,
+    maxPriceStale:        i.maxPriceStale,
+    msPerEpoch:           i.msPerEpoch,
+    windowOriginMs:       i.windowOriginMs,
+    priceParamScriptHash: priceParam.hash,   // neo beacon giá vào đúng script
+  }));
+  return {
+    priceNftScript: priceNft.script, priceNftPolicy: priceNft.hash,
+    priceParamHash: priceParam.hash,
+    consumeScript:  consume.script,  consumeHash:    consume.hash,
+  };
+}
+
 /** Chốt fail-closed: `treasury_addr` PHẢI mang stake part. Enterprise address bị từ chối.
  *
  *  Chưa validator nào trong kho nhận `treasury_addr` làm apply-param: người gọi duy nhất,

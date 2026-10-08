@@ -6,7 +6,8 @@
 //      từng khoá một đều bị bác (bài này sinh ca từ lược đồ, không phụ thuộc vào vector viết tay).
 //   3. Router THẬT (`http.ts` ▸ `handle`) trả lời khớp lược đồ — lời đáp không viết tay; thêm khoá lạ vẫn khớp
 //      (luật tương thích: `contract/compatibility.md`), kể cả ca `reservation_id`.
-//   4. Bảng mã lỗi: mỗi mã có mặt trong `src/`, mỗi lời đáp lỗi thật mang mã nằm trong bảng với đúng trạng thái.
+//   4. Bảng mã lỗi, hai chiều: mỗi mã trong bảng còn được `src/` phát ra; mỗi mã `src/` phát ra (quét chỗ ném +
+//      bảng ánh xạ mã) có hàng đúng trạng thái, trừ danh sách loại trừ có lý do (khối 5); lời đáp lỗi thật khớp bảng.
 //
 // Lời đáp của `/tx/quote` và `/tx/sponsor/first-consume` trên mã thật được kiểm bằng móc trong `feeQuote.test.ts`
 // (`bodyOf`) và `sponsorEmulator.test.ts` (`step`): hai khung đó nặng, không dựng lại ở đây.
@@ -16,7 +17,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { FundingError, type FundingErrorCode, type OwnerAuthErrorCode } from "@magiclamp/protocol-utils";
+
+import { PAIRS_ERROR_CODE_OF_PRICE } from "../src/consumeLine.js";
+import { ownerApiErrorOf } from "../src/errors.js";
+import { fundingApiErrorOf } from "../src/funding.js";
 import { handle } from "../src/http.js";
+import { ISSUED_ROUTES } from "../src/locks.js";
+import { SPONSOR_ERROR_STATUS } from "../src/sponsor.js";
 import { OWNER_PKH } from "./fixtures/preview.js";
 import {
   allOperations, checkRequest, checkResponse, errorCodes, expectMatchesContract, fmt, loadVectors, openapi,
@@ -336,6 +344,43 @@ describe("router thật khớp hợp đồng", () => {
     expect((r.body as { error: { code: string } }).error.code).toBe("CONSUME_PAIRS_SHAPE");
   });
 
+  it("`owner` đóng: khoá lạ bị bác ở lược đồ yêu cầu VÀ ở router thật (400 OWNER_CREDENTIAL_SHAPE, details.extra_fields)", async () => {
+    const rest = { op_type: 1, op_count: "2", fee_payer: FEE_PAYER };
+    const body = { ...rest, owner: { type: "key", hash: OWNER_PKH, label: "x" } };
+    expect(checkRequest("POST /tx/consume", body).length).toBeGreaterThan(0);
+    const r = await consumeHarness().call("POST", "/tx/consume", body);
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    const e = (r.body as { error: { code: string; details: { extra_fields?: string[] } } }).error;
+    expect(e.code).toBe("OWNER_CREDENTIAL_SHAPE");
+    expect(e.details.extra_fields).toEqual(["label"]);
+    // CẶP: cùng thân, owner đúng hình (khoá hoặc did) thì lược đồ nhận.
+    expect(checkRequest("POST /tx/consume", { ...rest, owner: { type: "key", hash: OWNER_PKH } })).toEqual([]);
+    expect(checkRequest("POST /tx/consume", { ...rest, owner: { type: "did", did: "did:prism:abc123" } })).toEqual([]);
+    expect(checkRequest("POST /tx/consume",
+      { ...rest, owner: { type: "did", did: "did:prism:abc123", device_key_hash: "d1".repeat(28) } })).toEqual([]);
+  });
+
+  it("`/tx/quote` đóng: khoá lạ ⟹ 400 FEE_QUOTE_SHAPE; route ngoài enum ⟹ 400 FEE_QUOTE_ROUTE_UNKNOWN; cả hai bị lược đồ bác", async () => {
+    const h = consumeHarness();
+    const extra = { route: "consume", params: {}, source: "app" };
+    expect(checkRequest("POST /tx/quote", extra).length).toBeGreaterThan(0);
+    const a = await h.call("POST", "/tx/quote", extra);
+    expect(a.status, JSON.stringify(a.body)).toBe(400);
+    const ea = (a.body as { error: { code: string; details: { extra_fields?: string[] } } }).error;
+    expect(ea.code).toBe("FEE_QUOTE_SHAPE");
+    expect(ea.details.extra_fields).toEqual(["source"]);
+    const unknown = { route: "withdraw-lamp", params: {} };
+    expect(checkRequest("POST /tx/quote", unknown).length).toBeGreaterThan(0);
+    const b = await h.call("POST", "/tx/quote", unknown);
+    expect(b.status, JSON.stringify(b.body)).toBe(400);
+    expect((b.body as { error: { code: string } }).error.code).toBe("FEE_QUOTE_ROUTE_UNKNOWN");
+    // CẶP: tám route của enum, `params: {}`, đều qua lược đồ — enum không hẹp hơn tập route router nhận.
+    const routes = ["create-vault", "instant-gen", "refresh-checkpoint", "schedule-commit", "schedule-fire", "consume",
+      "open-thread", "bind-did"];
+    expect([...routes].sort()).toEqual([...ISSUED_ROUTES].sort());
+    for (const route of routes) expect(checkRequest("POST /tx/quote", { route, params: {} }), route).toEqual([]);
+  });
+
   it("thân yêu cầu mà các bài dùng khớp lược đồ yêu cầu", async () => {
     const j = await journey();
     expect(checkRequest("POST /fee/utxo", { route: "consume" })).toEqual([]);
@@ -375,8 +420,11 @@ describe("bảng mã lỗi", () => {
     }
   });
 
-  it("mỗi mã trong bảng còn có mặt trong `src/` (mã bị xoá khỏi mã nguồn thì bảng phải đổi theo)", () => {
-    const missing = rows.filter(r => !new RegExp(`\\b${r.code}\\b`).test(SRC_TEXT)).map(r => r.code);
+  it("mỗi mã trong bảng còn được `src/` phát ra (mã bị xoá khỏi mã nguồn thì bảng phải đổi theo)", () => {
+    // Phát ra = chỗ ném có mã chữ trong `src/`, hoặc bảng ánh xạ mã của lớp lỗi bộ dựng (`scanEmittedCodes`):
+    // `FUNDING_SCRIPT_MISMATCH` chỉ có trong ProtocolUtils, `fundingApiErrorOf` chuyển nguyên mã.
+    const emitted = scanEmittedCodes().emitted;
+    const missing = rows.filter(r => !emitted.has(r.code)).map(r => r.code);
     expect(missing).toEqual([]);
   });
 
@@ -423,5 +471,188 @@ describe("bảng mã lỗi", () => {
       expect(row, `${label}: mã ${code} không có trong bảng`).toBeDefined();
       expect(row!.status, `${label}: ${code} trả ${r.status}`).toContain(r.status);
     }
+  });
+});
+
+// ── 5. Mã → bảng: mỗi mã `src/` phát ra trên route của hợp đồng có hàng trong bảng, đúng trạng thái ──────
+//
+// Chiều ngược của bài "mỗi mã trong bảng còn có mặt trong `src/`". Quét chỗ ném có mã CHỮ (literal), cộng
+// các bảng ánh xạ mã của lớp lỗi bộ dựng. Chỗ ném mà mã là BIỂU THỨC phải nằm trong `KNOWN_INDIRECT`:
+// thêm một chỗ ném gián tiếp mới mà không khai ⟹ bài đỏ, vì máy quét không thấy được mã nó phát.
+
+const SRC_FILES = srcFiles(SRC_DIR).map(p => ({ file: p.slice(SRC_DIR.length + 1), text: readFileSync(p, "utf8") }));
+
+/** Mã mà trạng thái HTTP là trạng thái của bên trên (Feecover) chuyển nguyên: không so trạng thái. */
+const RELAYED_STATUS = new Set(["FEE_PROXY_REJECTED"]);
+
+/** Chỗ ném có mã là biểu thức (`tệp|biểu thức`) — mỗi chỗ được phủ bằng một nguồn khác ở dưới. */
+const KNOWN_INDIRECT = new Set([
+  "errors.ts|code",                    // CodedApiError ▸ super(httpStatus, code, …): lớp nền
+  "errors.ts|e.code",                  // ownerApiErrorOf ⟹ OWNER_AUTH_CODES
+  "funding.ts|e.code",                 // fundingApiErrorOf ⟹ FUNDING_CODES
+  "sponsor.ts|e.code",                 // sponsorApiErrorOf ⟹ SPONSOR_ERROR_STATUS
+  "consumeLine.ts|code",               // assertConsumePairs ⟹ PAIRS_ERROR_CODE_OF_PRICE
+  "txBuilder.ts|e.code",               // BurnEntriesOverCapError ⟹ CONSUME_TOO_MANY_BATCHES
+  "buildRequest.ts|code",              // reqAmountCoded(…, "CODE") ⟹ mẫu phụ
+  "feePayer.ts|c.shape",               // bộ mã { shape: "CODE" } ⟹ mẫu phụ
+  "feePayer.ts|c.invalid",             // bộ mã { invalid: "CODE" } ⟹ mẫu phụ
+  "sponsor.ts|`${prefix}_NOT_FOUND`",  // uniqueByUnit(…, "PREFIX") ⟹ mẫu phụ
+  "sponsor.ts|`${prefix}_AMBIGUOUS`",
+]);
+
+const OWNER_AUTH_CODES: Record<OwnerAuthErrorCode, true> = {
+  OWNER_HASH_INVALID: true, OWNER_CREDENTIAL_SHAPE: true, OWNER_AUTH_MISMATCH: true,
+  OWNER_SCRIPT_WITNESS_UNAVAILABLE: true, OWNER_STAKE_NOT_REGISTERED: true, OWNER_WITHDRAW_RETURNED_NOTHING: true,
+};
+const FUNDING_CODES: Record<FundingErrorCode, true> = {
+  FUNDING_SHAPE: true, FUNDING_SCRIPT_MISMATCH: true, FUNDING_INSUFFICIENT: true,
+  FUNDING_WITNESS_MISMATCH: true, FUNDING_FEE_PAYER_INVALID: true,
+};
+
+const ONLY_SPONSOR = (steps: string, where: string) =>
+  `chỉ phát ở /tx/sponsor/{${steps}} (${where}) — các route đó nằm ngoài openapi.json`;
+/** Mã `src/` phát ra mà KHÔNG có hàng trong bảng, mỗi mã một lý do. Lập bằng cách quét hàm bao quanh chỗ ném. */
+const NOT_ON_CONTRACT_ROUTES: Readonly<Record<string, string>> = {
+  OWNER_TX_IN_FLIGHT: "đã nghỉ 2026-10-03: lớp OwnerTxInFlightError giữ lại cho app đời cũ, không chỗ nào khởi tạo",
+  FEE_PAYER_UNSUPPORTED: "chỉ /tx/create-vault (ngoài openapi.json); /tx/quote chỉ chèn fee_payer ở dạng đường dựng nhận",
+  FUNDING_COLLATERAL_INVALID: "chỉ đường did_payment của /tx/create-vault; trên /tx/quote 400 FEE_QUOTE_SELF_FUNDED chặn trước",
+  SPONSOR_ROLE_REQUIRED: "http.ts ▸ requireRole: chỉ route mở bằng thẻ vai sponsor, ngoài openapi.json",
+  SPONSOR_OWNER_DID_UNVERIFIABLE: ONLY_SPONSOR("open-vault,bind-did,open-fund,fund-vault", "assertOwnerDid"),
+  SPONSOR_OWNER_DID_MISMATCH: ONLY_SPONSOR("open-vault,bind-did,open-fund,fund-vault", "assertOwnerDid"),
+  SPONSOR_OWNER_NOT_DID: ONLY_SPONSOR("open-vault,bind-did,open-fund,fund-vault", "run, rào theo step"),
+  SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER: ONLY_SPONSOR("open-vault", "parseSponsorRequest"),
+  SPONSOR_DID_GENESIS_IN_FLIGHT: ONLY_SPONSOR("open-vault,open-fund", "holdDid genesis"),
+  SPONSOR_FUND_SET_CLOSED: ONLY_SPONSOR("open-vault,open-fund", "fundGenesisPins"),
+  SPONSOR_FUND_ALREADY_OPEN: ONLY_SPONSOR("open-fund", "openFund"),
+  SPONSOR_THREAD_DID_INVALID: ONLY_SPONSOR("bind-did,open-fund,fund-vault", "bindDid/openFund/fundVault"),
+  SPONSOR_VAULT_DID_ALREADY_SET: ONLY_SPONSOR("bind-did", "bindDid"),
+  SPONSOR_VAULT_DID_MISMATCH: ONLY_SPONSOR("bind-did,fund-vault", "bindDid/fundVault"),
+  SPONSOR_VAULT_DID_UNSET: ONLY_SPONSOR("fund-vault", "fundVault"),
+  SPONSOR_ANCHOR_NOT_FOUND: ONLY_SPONSOR("fund-vault", "fundVault ▸ uniqueByUnit"),
+  SPONSOR_ANCHOR_AMBIGUOUS: ONLY_SPONSOR("fund-vault", "fundVault ▸ uniqueByUnit"),
+  SPONSOR_DID_FUND_IN_FLIGHT: ONLY_SPONSOR("fund-vault", "holdDid fund-vault"),
+  SPONSOR_DID_FUNDED_ELSEWHERE: ONLY_SPONSOR("fund-vault", "assertDidNotFundedElsewhere"),
+  SPONSOR_FUND_AMBIGUOUS: ONLY_SPONSOR("fund-vault", "resolveSponsorFund"),
+  SPONSOR_FUND_DID_MISMATCH: ONLY_SPONSOR("fund-vault", "resolveSponsorFund"),
+  SPONSOR_FUND_NOT_OPENED: ONLY_SPONSOR("fund-vault", "resolveSponsorFund"),
+  SPONSOR_FUND_NOT_ALLOWED: ONLY_SPONSOR("fund-vault", "resolveSponsorFund, assertFundPinnedInputs"),
+  SPONSOR_CARP_ABOVE_CAP: ONLY_SPONSOR("fund-vault", "assertFundPinnedInputs"),
+  SPONSOR_FEE_WALLET_IS_SPONSOR: ONLY_SPONSOR("fund-vault", "fundVault"),
+  SPONSOR_UTXO_NOT_FOUND: ONLY_SPONSOR("fund-vault", "fundVault"),
+  SPONSOR_UTXO_NOT_ALLOWED: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosPinned"),
+  SPONSOR_UTXO_NOT_KEY: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosPinned"),
+  SPONSOR_UTXO_NO_CARP: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosPinned"),
+  SPONSOR_UTXO_NOT_FUND_SPONSOR: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosOfFundSponsor"),
+  // Mã của bộ dựng SDK (`MagicSDK/src/sponsorJourney.ts`) qua SPONSOR_ERROR_STATUS: chỉ bước T1/T2 ném chúng.
+  SPONSOR_DID_COMMIT_LENGTH: ONLY_SPONSOR("open-vault,fund-vault", "SDK assertSponsorDidCommit: buildSponsorT1OpenPrepaid, assertAnchor của T2"),
+  SPONSOR_ANCHOR_REF_WRONG: ONLY_SPONSOR("fund-vault", "SDK assertAnchor của buildSponsorT2Fund"),
+  SPONSOR_FUND_NOT_PINNED: ONLY_SPONSOR("fund-vault", "SDK buildSponsorT2Fund"),
+  SPONSOR_CARP_INSUFFICIENT: ONLY_SPONSOR("fund-vault", "SDK buildSponsorT2Fund"),
+  SPONSOR_CARP_OUTPUT_UNPINNED: ONLY_SPONSOR("fund-vault", "SDK assertSponsorCarpOutputs của buildSponsorT2Fund"),
+  SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER: ONLY_SPONSOR("claim", "parseClaimRequest"),
+  SPONSOR_CLAIM_ABOVE_MAX: ONLY_SPONSOR("claim", "claimFund"),
+  SPONSOR_FEE_WALLET_IS_BENEFICIARY: ONLY_SPONSOR("claim", "claimFund"),
+  SPONSOR_FUND_NOT_FOUND: ONLY_SPONSOR("claim", "claimFund"),
+  SPONSOR_FUND_NOT_CLAIMABLE: ONLY_SPONSOR("claim", "claimFund"),
+  SPONSOR_FUND_NOTHING_TO_CLAIM: ONLY_SPONSOR("claim", "claimFund"),
+};
+
+type Emitted = Map<string, { statuses: Set<number>; relayed: boolean; files: Set<string> }>;
+
+function scanEmittedCodes(): { emitted: Emitted; indirect: string[]; errWithoutStatus: string[] } {
+  const emitted: Emitted = new Map();
+  const indirect: string[] = [];
+  const errWithoutStatus: string[] = [];
+  const add = (code: string, status: number | "relayed", file: string): void => {
+    const e = emitted.get(code) ?? { statuses: new Set<number>(), relayed: false, files: new Set<string>() };
+    if (status === "relayed") e.relayed = true; else e.statuses.add(status);
+    e.files.add(file);
+    emitted.set(code, e);
+  };
+  const THROW = /(?:new\s+(?:CodedApiError|TxApiError)|\bsuper)\(\s*([^,()]+?)\s*,\s*([^,()]+?)\s*,/g;
+  const LIT_CODE = /^"([A-Z][A-Z0-9_]*)"$/;
+  const TERN_CODE = /^[^?]+\?\s*"([A-Z][A-Z0-9_]*)"\s*:\s*"([A-Z][A-Z0-9_]*)"$/;
+  const LIT_STATUS = /^(\d{3})$/;
+  const TERN_STATUS = /^[^?]+\?\s*(\d{3})\s*:\s*(\d{3})$/;
+  for (const { file, text } of SRC_FILES) {
+    for (const m of text.matchAll(THROW)) {
+      const sExpr = m[1]!, cExpr = m[2]!;
+      const lc = LIT_CODE.exec(cExpr), tc = TERN_CODE.exec(cExpr);
+      const codes = lc !== null ? [lc[1]!] : tc !== null ? [tc[1]!, tc[2]!] : undefined;
+      if (codes === undefined) { indirect.push(`${file}|${cExpr}`); continue; }
+      if (codes.length === 1 && RELAYED_STATUS.has(codes[0]!)) { add(codes[0]!, "relayed", file); continue; }
+      const ls = LIT_STATUS.exec(sExpr), ts = TERN_STATUS.exec(sExpr);
+      const statuses = ls !== null ? [Number(ls[1])] : ts !== null ? [Number(ts[1]), Number(ts[2])] : undefined;
+      if (statuses === undefined) { indirect.push(`${file}|status ${sExpr}`); continue; }
+      if (codes.length === 2 && statuses.length === 2) codes.forEach((c, i) => add(c, statuses[i]!, file));
+      else for (const c of codes) for (const s of statuses) add(c, s, file);
+    }
+    const withStatus = [...text.matchAll(/status:\s*(\d{3}),\s*body:\s*err\(\s*"([A-Z][A-Z0-9_]*)"/g)];
+    for (const m of withStatus) add(m[2]!, Number(m[1]), file);
+    if ([...text.matchAll(/\berr\(\s*"[A-Z]/g)].length !== withStatus.length) errWithoutStatus.push(file);
+    for (const m of text.matchAll(/status:\s*(\d{3}),\s*body:\s*\{\s*error:\s*\{\s*code:\s*"([A-Z][A-Z0-9_]*)"/g)) {
+      add(m[2]!, Number(m[1]), file);
+    }
+    for (const m of text.matchAll(/reqAmountCoded\([^;]*?"([A-Z][A-Z0-9_]*)"\s*\)/g)) add(m[1]!, 400, file);
+    for (const m of text.matchAll(/\b(?:shape|invalid):\s*"([A-Z][A-Z0-9_]*)"/g)) add(m[1]!, 400, file);
+    for (const m of text.matchAll(/this\.uniqueByUnit\([^;]*?"([A-Z][A-Z0-9_]*)"/g)) {
+      add(`${m[1]!}_NOT_FOUND`, 404, file);
+      add(`${m[1]!}_AMBIGUOUS`, 409, file);
+    }
+  }
+  // Bảng ánh xạ mã của lớp lỗi bộ dựng.
+  for (const code of Object.keys(OWNER_AUTH_CODES)) add(code, ownerApiErrorOf({ code, message: "x" }).httpStatus, "errors.ts");
+  for (const code of Object.keys(FUNDING_CODES) as FundingErrorCode[]) {
+    add(code, fundingApiErrorOf(new FundingError(code, "x")).httpStatus, "funding.ts");
+  }
+  for (const [code, status] of Object.entries(SPONSOR_ERROR_STATUS)) if (status !== "internal") add(code, status, "sponsor.ts");
+  for (const code of Object.values(PAIRS_ERROR_CODE_OF_PRICE)) add(code, 400, "consumeLine.ts");
+  const tb = SRC_FILES.find(f => f.file === "txBuilder.ts")!.text;
+  const burn = /BurnEntriesOverCapError\)\s*\{\s*return new CodedApiError\((\d{3}),\s*e\.code/.exec(tb);
+  if (burn === null) throw new Error("txBuilder.ts: không còn thấy nhánh BurnEntriesOverCapError ⟹ cập nhật máy quét");
+  add("CONSUME_TOO_MANY_BATCHES", Number(burn[1]), "txBuilder.ts");
+  return { emitted, indirect, errWithoutStatus };
+}
+
+describe("bảng mã lỗi: chiều mã → bảng", () => {
+  const byCode = new Map(errorCodes.codes.map(r => [r.code, r]));
+  const scan = scanEmittedCodes();
+
+  it("không có chỗ ném gián tiếp chưa khai; mọi `err(\"CODE\"` đi kèm status; mỗi mục KNOWN_INDIRECT còn sống", () => {
+    expect(scan.indirect.filter(x => !KNOWN_INDIRECT.has(x))).toEqual([]);
+    expect(scan.errWithoutStatus).toEqual([]);
+    expect([...KNOWN_INDIRECT].filter(x => !scan.indirect.includes(x))).toEqual([]);
+  });
+
+  it("mỗi mã phát ra có hàng trong bảng với đúng trạng thái, hoặc nằm trong danh sách loại trừ", () => {
+    expect(scan.emitted.size).toBeGreaterThan(150); // chống bài rỗng: máy quét còn thấy mã
+    const problems: string[] = [];
+    for (const [code, e] of scan.emitted) {
+      if (NOT_ON_CONTRACT_ROUTES[code] !== undefined) continue;
+      const row = byCode.get(code);
+      if (row === undefined) { problems.push(`${code} (${[...e.files].join(",")}) không có trong bảng`); continue; }
+      for (const s of e.statuses) if (!e.relayed && !row.status.includes(s)) problems.push(`${code} phát ${s}, bảng khai ${row.status.join("/")}`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("mỗi mã loại trừ còn được phát, vắng trong bảng, có lý do; mã tài trợ loại trừ không nằm trong first-consume/plan", () => {
+    const sponsorText = SRC_FILES.find(f => f.file === "sponsor.ts")!.text;
+    const bodyOf = (start: string, end: RegExp): string => {
+      const i = sponsorText.indexOf(start);
+      expect(i, start).toBeGreaterThanOrEqual(0);
+      const rest = sponsorText.slice(i + start.length);
+      const j = rest.search(end);
+      return j < 0 ? rest : rest.slice(0, j);
+    };
+    const contractBodies = bodyOf("async firstConsume(", /\n {2}(?:private |async )/) +
+      bodyOf("export function sponsorPlanBody(", /\n}\n/);
+    for (const [code, why] of Object.entries(NOT_ON_CONTRACT_ROUTES)) {
+      expect(scan.emitted.has(code), `${code} không còn được phát ⟹ gỡ khỏi danh sách loại trừ`).toBe(true);
+      expect(byCode.has(code), `${code} có trong bảng ⟹ gỡ khỏi danh sách loại trừ`).toBe(false);
+      expect(why.length, code).toBeGreaterThan(10);
+      if (code.startsWith("SPONSOR_")) expect(contractBodies.includes(`"${code}"`), `${code} nằm trong first-consume/plan`).toBe(false);
+    }
+    expect(SRC_TEXT.includes("new OwnerTxInFlightError(")).toBe(false);
   });
 });

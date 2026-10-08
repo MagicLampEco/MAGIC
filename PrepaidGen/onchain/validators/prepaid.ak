@@ -8789,6 +8789,34 @@ test g3v_spend_staked_twin_input_rejected() fail {
   g3v_setdel(g3v_setdel_tx([twin], []))
 }
 
+// Ghim địa chỉ đầy đủ của output tiếp nối (R169): bộ lọc theo payment credential
+// ra đúng một output, nên dòng `expect o.address == vault_addr` ở
+// `find_vault_output_raw` là thứ DUY NHẤT chặn két tiếp nối trôi sang stake
+// credential lạ (cùng script, khác địa chỉ). Hai ca chỉ khác stake credential của
+// output tiếp nối; không output nào khác ở script két.
+
+fn g3v_setdel_cont_tx(restaked: Bool) -> Transaction {
+  let out0 = t_vault_out(sp_setdel_dout())
+  let out =
+    if restaked {
+      Output {
+        ..out0,
+        address: address.with_delegation_key(out0.address, g3v_stranger_stake),
+      }
+    } else {
+      out0
+    }
+  branch_tx(t_vault_in(sp_setdel_din()), out, [], [], [t_owner])
+}
+
+test g3v_spend_continuation_canonical_address_ok() {
+  g3v_setdel(g3v_setdel_cont_tx(False))
+}
+
+test g3v_spend_continuation_restaked_rejected() fail {
+  g3v_setdel(g3v_setdel_cont_tx(True))
+}
+
 // ── Lỗ 2: genesis két/quỹ chỉ lọc output MANG NFT ─────────────────────────────
 
 fn g3v_vault_mint(extra: List<Output>) -> Bool {

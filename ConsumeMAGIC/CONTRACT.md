@@ -198,7 +198,10 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > được cho các mã KHÁC mã 7 nữa; và với mã 7, tầng dưới đây khoá cứng hệ số về 1,0×
   > bất kể `ops_served_epoch` của mã 7 là bao nhiêu:
   > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `fixed_price_op_types` — hằng biên
-  >   dịch, hiện = `[7]`.
+  >   dịch, hiện = `[7, 20]` (mã 20 = `platform_fee_unit`, thêm 2026-10-09).
+  > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `base_price_pinned_if_unit` — riêng
+  >   mã 20 còn bị ép `op.base_price == platform_fee_base_price` (10⁶ nanogic = 0,001
+  >   MAGIC), vì mã 20 là ĐƠN VỊ ĐO phí nền tảng chứ không phải một mức giá (PRICE-018).
   > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `demand_mult_pinned_if_fixed` — ép
   >   `op.demand_mult == q` cho mọi dòng có `op_type ∈ fixed_price_op_types`.
   > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `valid_param` — gọi gate trên cho
@@ -298,10 +301,12 @@ Validator consume ĐỌC giá từ đây — **KHÔNG tin amount client mớm**.
 | Trần số dòng | **16** (`max_op_prices`) | `valid_param` chạy 1 lần / Engage input ⇒ bảng phình = DoS ex-unit mọi tx consume, không hạ được vì beacon chỉ committee sửa. 16 chọn theo số đo `aiken check` (MEM là ràng buộc binding) |
 | `m_min`/`m_max` PIN về hằng | `500_000_000` / `2_000_000_000` | Check tương-đối không chặn band-escape: `demand` bám theo `m_max` nên giá nổ ~1e6× mà vẫn "trong band" |
 | GATE per-op | `base_price × m_min ≥ Q` | Giá 1 đơn vị ở demand thấp nhất vẫn ≥ 1 nanogic ⇒ đóng collapse-to-0. Bao hàm `base_price ≥ 0` và cấm luôn `base_price == 0` (nhánh chết — `consume` ép `required > 0`) |
+| Giá cố định | `demand_mult == Q` cho `op_type ∈ fixed_price_op_types` (`[7, 20]`) | PRICE-017 — xem §A |
+| Đơn vị phí nền tảng | `base_price == 1_000_000` cho `op_type == 20` | PRICE-018 — mã 20 định nghĩa 1 đơn vị = 0,001 MAGIC, không phải mức giá |
 
 **Hệ quả bắt buộc cho off-chain:** phải **sắp xếp bảng giá tăng dần theo `op_type` trước khi post**
 (`pricing/src/price.ts:toCanonicalOpPrices`) và **kiểm bằng `assertValidPriceParam` trước khi post**
-(bản gương của `valid_param`, ném `PRICE-010..015`). Bảng sai chỉ lộ ra khi mọi tx consume đã chết
+(bản gương của `valid_param`, ném `PRICE-010..018`). Bảng sai chỉ lộ ra khi mọi tx consume đã chết
 hàng loạt — beacon lúc đó chỉ committee sửa được.
 
 ### B2. Redeemer + bất biến validator `consume` (engagement-state, Aiken Plutus V3)

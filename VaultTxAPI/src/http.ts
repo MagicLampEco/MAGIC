@@ -113,6 +113,9 @@ export interface RouterDeps {
   /** Nhãn nguồn của MỌI khối, khối chính trước — `/health` ▸ `deployment_sources`. Vắng ⟹ chỉ
    *  `[deploymentSource]`. */
   deploymentSources?: string[];
+  /** Khoá ký mà tiến trình này GIỮ (hiện chỉ role `platform` — `server.ts`). Chỉ role + pkh, KHÔNG bao giờ giá trị
+   *  khoá. Vắng/rỗng ⟹ `/health` khai `holds_signing_material: false`. Khoá của người dùng không bao giờ ở đây. */
+  heldKeys?: { role: "platform"; pkh: string }[];
 }
 
 /**
@@ -180,8 +183,10 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
           vault_type: s.vaultType, address: s.address, script_hash: s.scriptHash,
           ...(s.vaultType === "Schedule" ? { schedule_params: scheduleParamsView() } : {}),
         })),
-        // Nói thẳng ở chỗ máy đọc được, không chỉ ở README.
-        holds_signing_material: false,
+        // Nói thẳng ở chỗ máy đọc được, không chỉ ở README: tiến trình này có giữ khoá ký nào không
+        // (khoá người dùng thì không bao giờ). `signing_keys` kê role + pkh, không bao giờ giá trị khoá.
+        holds_signing_material: (deps.heldKeys?.length ?? 0) > 0,
+        signing_keys: deps.heldKeys ?? [],
         // Chỉ trạng thái, không bao giờ token hay băm của nó.
         feecover: deps.feeProxy === undefined ? "absent" : "configured",
         // Bên gọi so commit này với commit họ dựa vào, khỏi phải hỏi người vận hành.

@@ -5,6 +5,20 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-09 — VaultTxAPI 2.0.0: `/health` khai đúng khoá ký tiến trình giữ
+
+**Đổi gì.** `GET /health` thêm `signing_keys: [{ role: "platform", pkh }]` (role + băm khoá, không bao giờ giá trị khoá) và
+`holds_signing_material` thành boolean `= signing_keys không rỗng` (`VaultTxAPI/src/http.ts` ▸ `RouterDeps.heldKeys`; `src/server.ts` ▸
+`platformPkh`, cùng nguồn với dòng nhật ký khởi động). Hợp đồng `contract/` lên `2.0.0` (`info.version`, `error-codes.json`, mọi vector);
+`vectors/health.json` thêm mẫu tiến trình giữ khoá platform và các mẫu bị bác (`signing-key-role-unknown`, `holds-false-with-signing-keys`,
+`missing-signing-keys`).
+**Vì sao.** Từ 2026-10-07 tiến trình nạp `VAULT_TX_API_PLATFORM_KEY` (Prepaid) giữ một khoá platform, mà `/health` vẫn khai hằng
+`holds_signing_material: false` — sai ở đúng chỗ bên vận hành và bên tích hợp dò xem tiến trình có giữ khoá không. Major vì
+`compatibility.md` §4: đổi kiểu một khoá có sẵn (`const false` → boolean) và người đọc rẽ nhánh theo `false` cũ có thể hiểu sai.
+**Cái gì gãy.** Người đọc nào coi `holds_signing_material === false` là bất biến sẽ thấy `true` trên tiến trình Prepaid giữ khoá platform;
+phải chuyển sang đọc `signing_keys`. Ràng buộc "true ⇔ signing_keys không rỗng" chỉ phần "false ⟹ rỗng" nằm trong lược đồ; vế còn lại do
+`tests/service.test.ts` kiểm lúc chạy.
+
 ## 2026-10-09 — VaultTxAPI 1.2.0: `schedule_params` trong `/health`, `details.rule`, chủ DID + `fee_payer` trên ScheduleGen
 
 **Đổi gì.** (1) `GET /health ▸ vault_scopes[]` — mục `Schedule` mang `schedule_params { min_length, max_length,

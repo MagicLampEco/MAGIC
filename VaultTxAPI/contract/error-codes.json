@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.2.0",
+  "contract_version": "2.0.0",
   "description": "Error codes of the routes in openapi.json. Every non-2xx body is the ErrorResponse envelope. status lists the HTTP statuses the code is returned with. routes lists the path ids the code can appear on; '*' means every route except /health. The table is checked against the server source in both directions: every code listed here is emitted by the server, and every code the server emits on these routes is listed with its status. Codes emitted only on routes outside openapi.json are not listed. A later minor release may add codes, so a reader must still handle an unknown code by its HTTP status (see compatibility.md).",
   "codes": [
     {

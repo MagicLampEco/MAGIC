@@ -165,6 +165,11 @@ chạy), `commit_source`. Commit ĐO bằng `git rev-parse HEAD` ở cây mã l�
 qua biến môi trường (`src/buildInfo.ts`). Không đo được thì `commit: null`,
 `commit_source: "unavailable"` kèm `commit_unavailable_reason` — không đoán.
 
+`/health` khai khoá ký mà tiến trình GIỮ (hợp đồng 2.0.0): `holds_signing_material` (boolean) và
+`signing_keys` (`[{ "role": "platform", "pkh": "<56 hex>" }]`, chỉ role + băm khoá, không bao giờ giá trị khoá).
+Tiến trình Prepaid nạp `VAULT_TX_API_PLATFORM_KEY` khai `true` + khoá platform; tiến trình khác khai `false` + `[]`.
+Khoá của người dùng không bao giờ ở đây. Pkh lấy cùng nguồn với dòng nhật ký khởi động (`src/server.ts` ▸ `platformPkh`).
+
 `/health` còn khai tài sản LAMP mà bản deploy nướng vào mọi két, dạng máy đọc:
 `"lamp": { "policy_id": "<56 hex>", "asset_name_hex": "<hex>" }` — cùng nguồn với bộ dựng
 (khối `lamp` của tệp deploy), không gõ tay. App so `policy_id` này với policy LAMP mà két Wakeme
@@ -519,7 +524,7 @@ khác tag là **hai chủ khác nhau**: không vault nào của người này kh
 và khoá mềm (§4) cũng tách riêng.
 
 **Chủ script cần nhân chứng.** Validator đòi giao dịch rút từ tài khoản thưởng `Script(h)`.
-Dịch vụ không ký và không giữ khoá, nên nó chỉ dựng được mục rút đó khi có đủ hai thứ:
+Dịch vụ không ký thay chủ két và không giữ khoá của họ (khoá duy nhất nó giữ là platform, §1), nên nó chỉ dựng được mục rút đó khi có đủ hai thứ:
 
 1. cấu hình triển khai có mục `did_stake` (§6) — thiếu ⟹ `501 OWNER_SCRIPT_WITNESS_UNAVAILABLE`;
 2. yêu cầu mang `owner_witness` — thiếu ⟹ `400 OWNER_SCRIPT_WITNESS_UNAVAILABLE`:

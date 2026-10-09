@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.2.0",
+  "contract_version": "2.0.0",
   "operation": "GET /health",
   "responses": {
     "valid": [
@@ -33,6 +33,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,
@@ -73,6 +74,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": "abababababababababababababababababababab",
           "commit_dirty": false,
@@ -88,64 +90,8 @@
         }
       },
       {
-        "name": "additive-unknown-keys",
+        "name": "process-holding-platform-key",
         "status": 200,
-        "body": {
-          "ok": true,
-          "network": "Preview",
-          "chain": "recorded",
-          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
-          "deployment_sources": [
-            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
-          ],
-          "lamp": {
-            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
-            "asset_name_hex": "744c414d50",
-            "ticker": "LAMP"
-          },
-          "change_address_strategy": "enterprise_from_owner_pkh",
-          "vault_scopes": [
-            {
-              "vault_type": "Schedule",
-              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
-              "schedule_params": {
-                "min_length": 10,
-                "max_length": 200,
-                "delay_epochs": 2,
-                "min_lamp_per_fire": "1000000"
-              }
-            }
-          ],
-          "holds_signing_material": false,
-          "feecover": "configured",
-          "commit": null,
-          "commit_dirty": null,
-          "commit_source": "not_measured",
-          "base_path": "",
-          "epoch": null,
-          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE",
-          "build_hint": "new top-level key"
-        },
-        "note": "Unknown keys at any level are additive: a reader accepts them."
-      },
-      {
-        "name": "method-not-allowed",
-        "status": 405,
-        "body": {
-          "error": {
-            "code": "METHOD_NOT_ALLOWED",
-            "message": "This route only accepts GET.",
-            "details": {}
-          }
-        }
-      }
-    ],
-    "invalid": [
-      {
-        "name": "holds-signing-material-true",
-        "status": 200,
-        "why": "The service never holds signing material; true is a contract violation, not a value to display.",
         "body": {
           "ok": true,
           "network": "Preview",
@@ -179,8 +125,163 @@
           "commit_source": "not_measured",
           "base_path": "",
           "epoch": null,
-          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE",
+          "signing_keys": [
+            {
+              "role": "platform",
+              "pkh": "abababababababababababababababababababababababababababab"
+            }
+          ]
+        },
+        "note": "A Prepaid process started with VAULT_TX_API_PLATFORM_KEY holds one signing key: holds_signing_material is true and signing_keys lists its role and key hash (never the key). A user key is never held."
+      },
+      {
+        "name": "additive-unknown-keys",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50",
+            "ticker": "LAMP"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
+            }
+          ],
+          "holds_signing_material": false,
+          "signing_keys": [],
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE",
+          "build_hint": "new top-level key"
+        },
+        "note": "Unknown keys at any level are additive: a reader accepts them."
+      },
+      {
+        "name": "method-not-allowed",
+        "status": 405,
+        "body": {
+          "error": {
+            "code": "METHOD_NOT_ALLOWED",
+            "message": "This route only accepts GET.",
+            "details": {}
+          }
         }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "signing-key-role-unknown",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
+            }
+          ],
+          "holds_signing_material": true,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE",
+          "signing_keys": [
+            {
+              "role": "user",
+              "pkh": "abababababababababababababababababababababababababababab"
+            }
+          ]
+        },
+        "why": "role is one of the closed set [\"platform\"]; a user key is never held, so no \"user\" role exists."
+      },
+      {
+        "name": "holds-false-with-signing-keys",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE",
+          "signing_keys": [
+            {
+              "role": "platform",
+              "pkh": "abababababababababababababababababababababababababababab"
+            }
+          ]
+        },
+        "why": "holds_signing_material false while signing_keys lists a key: the two fields disagree (the schema half of the invariant)."
       },
       {
         "name": "missing-holds-signing-material",
@@ -222,6 +323,46 @@
         }
       },
       {
+        "name": "missing-signing-keys",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        },
+        "why": "signing_keys is guaranteed (empty list when the process holds no key)."
+      },
+      {
         "name": "ok-as-string",
         "status": 200,
         "why": "ok is the boolean true.",
@@ -252,6 +393,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,
@@ -292,6 +434,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "enabled",
           "commit": null,
           "commit_dirty": null,
@@ -332,6 +475,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,
@@ -372,6 +516,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,
@@ -412,6 +557,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,
@@ -451,6 +597,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": "abababababababababababababababababababab",
           "commit_dirty": false,
@@ -496,6 +643,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": "abababababababababababababababababababab",
           "commit_dirty": false,
@@ -534,6 +682,7 @@
             }
           ],
           "holds_signing_material": false,
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,

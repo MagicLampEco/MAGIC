@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
   Emulator, Lucid, Data, Constr, CML, applyParamsToScript, generateEmulatorAccount,
-  generateEmulatorAccountFromPrivateKey, getAddressDetails, PROTOCOL_PARAMETERS_DEFAULT, mintingPolicyToId, scriptFromNative, toUnit, validatorToAddress,
+  generateEmulatorAccountFromPrivateKey, credentialToRewardAddress, getAddressDetails, PROTOCOL_PARAMETERS_DEFAULT, mintingPolicyToId, scriptFromNative, toUnit, validatorToAddress,
   validatorToScriptHash,
   type EmulatorAccount, type LucidEvolution, type Script, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
@@ -66,6 +66,14 @@ let deployer: EmulatorAccount;
 let writer: EmulatorAccount;
 let rateKey: EmulatorAccount;
 let parking: EmulatorAccount;
+// Chủ DID + ví trả phí bên thứ ba (đường `fee_payer` của VaultTxAPI). `didKey` là khoá của script
+// native đóng vai `did_stake`; `feeAcc` chỉ có MỘT UTxO ADA — đúng hình dạng Feecover giao xuống.
+let feeAcc: EmulatorAccount;
+let didKey: EmulatorAccount;
+let didNative: Script;
+let didHash = "";
+let didReward = "";
+let vaultNftDid: string;
 let gb: GenBeaconsScripts;
 let vaultScript: Script;
 let commitScript: Script;
@@ -146,19 +154,21 @@ beforeAll(async () => {
   writer   = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
   rateKey  = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
   parking  = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
+  feeAcc   = generateEmulatorAccountFromPrivateKey({ lovelace: 40_000_000n });
+  didKey   = generateEmulatorAccountFromPrivateKey({ lovelace: 5_000_000n });
   // Trần kích thước tx = trần THẬT Preprod/mainnet (16 384 B), ghi tường minh. Bản d2b phải
   // nới lên 20 000 vì két gộp 15 905 B không công bố nổi làm ref-script (16 442 B); sau khi
   // tách nhánh ký ra `commit` (b50770db) két còn 12 134 B, nên mọi tx ở đây — kể cả bốn tx
   // công bố ref-script — phải lọt trần thật. Nới lại trần ở đây là giấu một hồi quy.
-  emulator = new Emulator([deployer, writer, rateKey, parking],
+  emulator = new Emulator([deployer, writer, rateKey, parking, feeAcc, didKey],
     { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 16_384 });
   emulator.time = Number(O + E0 * P + 60_000n);
   lucid = await Lucid(emulator, "Custom");
   lucid.selectWallet.fromSeed(deployer.seedPhrase);
 
-  // 6 seed one-shot: sổ · beacon GB · gb_shard · ρ · shard_nft · genesis két
+  // 7 seed one-shot: sổ · beacon GB · gb_shard · ρ · shard_nft · genesis két · genesis két chủ DID
   let split = lucid.newTx();
-  for (let i = 0; i < 6; i++) split = split.pay.ToAddress(deployer.address, { lovelace: 20_000_000n });
+  for (let i = 0; i < 7; i++) split = split.pay.ToAddress(deployer.address, { lovelace: 20_000_000n });
   const splitHash = await submitBuilder(split);
   const seed = (i: number) => ({ txHash: splitHash, outputIndex: i });
   const seedU = async (i: number) => (await emulator.getUtxosByOutRef([seed(i)]))[0]!;
@@ -266,6 +276,37 @@ beforeAll(async () => {
       { lovelace: 5_000_000n, [lampUnit]: LAMP_Q, [vaultNft]: 1n })
     .addSigner(deployer.address));
 
+  // Két THỨ HAI, chủ = Script(did_stake): script native đóng vai `did_stake` (rút 0 từ reward address
+  // của nó là cách chứng minh quyền chủ — `owner_auth`). Phải ĐĂNG KÝ stake credential trước khi rút.
+  didNative = scriptFromNative({ type: "sig", keyHash: pkh(didKey) });
+  didHash = validatorToScriptHash(didNative);
+  didReward = credentialToRewardAddress(NET, { type: "Script", hash: didHash });
+  await submitBuilder(lucid.newTx().register.Stake(didReward));
+  await submitBuilder(lucid.newTx()
+    .mintAssets({ [lampUnit]: LAMP_Q })
+    .attach.MintingPolicy(lampNative)
+    .pay.ToAddress(deployer.address, { lovelace: 3_000_000n, [lampUnit]: LAMP_Q })
+    .addSigner(deployer.address));
+  const vSeedDid = await seedU(6);
+  const nftNameDid = Buffer.from(blake2b(Buffer.from(Data.to(outRef(vSeedDid)), "hex"), { dkLen: 32 })).toString("hex");
+  vaultNftDid = toUnit(vaultHash, nftNameDid);
+  const genesisDid: TVaultDatum = makeVaultV2({
+    owner: { Script: [didHash] } as TVaultDatum["owner"],
+    lamp_balance: LAMP_Q,
+    loyalty_holdings: [{ amount: LAMP_Q, acquired_epoch: 0n, is_locked: false }],
+    last_updated_epoch: 0n,
+    usage_window_epoch: 0n,
+    attribution: { attribution_root: "", last_event_epoch: 0n, total_events: 0n },
+  });
+  // Genesis đòi `owner_authorized`: với Script(h) là một mục rút 0 từ chính h trong tx này.
+  await submitBuilder(didAuth().attachWithdraw(lucid.newTx()
+    .collectFrom([vSeedDid])
+    .mintAssets({ [vaultNftDid]: 1n }, Data.to(new Constr(0, [outRef(vSeedDid)])))
+    .readFrom([refUtxos[0]!])
+    .pay.ToContract(vaultAddr, { kind: "inline", value: Data.to(genesisDid, VaultDatum) },
+      { lovelace: 5_000_000n, [lampUnit]: LAMP_Q, [vaultNftDid]: 1n })
+    .addSigner(deployer.address)), [didKey]);
+
   // Sang epoch kế (ρ genesis đã hiệu lực từ E0), ghi GreenBack trong CHÍNH epoch đó.
   goToEpoch(E0 + 1n);
   E1 = epochNow();
@@ -297,10 +338,8 @@ async function commitTx(
 ) {
   return buildScheduleCommitTx({
     commitScript, commitRefScriptUtxo: commitRef,
-    ...over,
     lucid, vaultUtxo: await only(vaultNft), shardUtxos: await lampShardUtxos(),
     scheduleLength: N, lampPerEpoch: LAMBDA, userAddress: deployer.address,
-    // (commitScript/commitRefScriptUtxo đặt ở trên, `over` ghi đè được)
     vaultScript, shardScript, gbShardScript: gb.gbShard.script,
     gen: {
       gbBeaconNftPolicy: gb.greenback.hash, gbBeaconScriptHash: gb.greenback.hash,
@@ -314,6 +353,8 @@ async function commitTx(
     lampPolicyId: lampPolicy, lampAssetName: LAMP_NAME, network: NET,
     tipPosixMs: BigInt(nowMs()), refScriptUtxos: refUtxos,
     ...(tamper ? { tamperOutputDatum: tamper } : {}),
+    // Cuối cùng ⟹ ghi đè được MỌI trường (ví lucid, ownerAuth, thế chấp… cho đường `fee_payer`).
+    ...over,
   } as any);
 }
 
@@ -325,6 +366,69 @@ async function fireTx(tamper?: (d: TVaultDatum) => TVaultDatum) {
     ...(tamper ? { tamperOutputDatum: tamper } : {}),
   } as any);
 }
+
+// ── Đường `fee_payer` + chủ DID (VaultTxAPI: `txBuilder.ts` ▸ `lucidFor` + `collateralLovelace`) ──
+// Ví lucid của dịch vụ là ví CHỈ-ĐỌC (`fromAddress`) mang ĐÚNG MỘT UTxO của bên trả phí; thế chấp
+// tường minh 3 ADA. Phép dựng ở đây chép hình dạng đó: ví của CHÍNH `lucid` tạm chuyển sang `fromAddress` rồi trả lại.
+// (KHÔNG dựng một `Lucid(emulator)` thứ hai: đo 2026-10-09, lần dựng thứ hai làm lệch cấu hình slot của Emulator —
+// cận trên hiệu lực tính theo gốc slot mới, mọi tx sau đó bị bác "Upper bound … not in slot range".)
+const FEE_COLLATERAL = 3_000_000n;
+const didAuth = () => ({
+  kind: "script" as const, hash: didHash,
+  attachWithdraw: (t: TxBuilder) => t.withdraw(didReward, 0n).attach.Script(didNative),
+});
+/** UTxO ADA-thuần lớn nhất của ví trả phí — đúng một UTxO giao cho dịch vụ. */
+async function feePayerUtxo(): Promise<UTxO> {
+  const us = (await emulator.getUtxos(feeAcc.address))
+    .filter(u => Object.keys(u.assets).length === 1 && u.assets.lovelace !== undefined)
+    .sort((a, b) => (b.assets.lovelace! > a.assets.lovelace! ? 1 : -1));
+  if (us.length === 0) throw new Error("ví trả phí hết UTxO ADA thuần");
+  return us[0]!;
+}
+async function withFeePayerWallet<T>(u: UTxO, build: () => Promise<T>): Promise<T> {
+  lucid.selectWallet.fromAddress(feeAcc.address, [u]);
+  try { return await build(); } finally { lucid.selectWallet.fromSeed(deployer.seedPhrase); }
+}
+const outRefKey = (r: { txHash: string; outputIndex: number }) => `${r.txHash}#${r.outputIndex}`;
+/** input / thế chấp / required_signers / mục rút của một tx, đọc từ CBOR. */
+function shapeOf(cbor: string) {
+  const body = CML.Transaction.from_cbor_hex(cbor).body();
+  const refs = (l: any) => {
+    const out: string[] = [];
+    if (l === undefined || l === null) return out;
+    for (let i = 0; i < l.len(); i++) out.push(`${l.get(i).transaction_id().to_hex()}#${l.get(i).index()}`);
+    return out;
+  };
+  const rs = body.required_signers();
+  const signers: string[] = [];
+  if (rs) for (let i = 0; i < rs.len(); i++) signers.push(rs.get(i).to_hex());
+  const w = body.withdrawals();
+  return { inputs: refs(body.inputs()), collateral: refs(body.collateral_inputs()), signers, withdrawals: w ? w.len() : 0 };
+}
+async function submitKeys(tx: any, keys: EmulatorAccount[]): Promise<string> {
+  let s = tx;
+  keys.forEach((k, i) => { s = (i === 0 ? tx.sign : s.sign).withPrivateKey(k.privateKey); });
+  const signed = await s.completeSafe();
+  if (signed._tag === "Left") throw new Error(`ký: ${describeError(signed.left)}`);
+  const sub = await signed.right.submitSafe();
+  if (sub._tag === "Left") throw new Error(`nộp: ${describeError(sub.left)}`);
+  emulator.awaitBlock(1);
+  return sub.right;
+}
+function commitTxDidFee(u: UTxO, over: Record<string, unknown> = {}) {
+  return withFeePayerWallet(u, async () => commitTx(undefined, {
+    userAddress: feeAcc.address, ownerAuth: didAuth(), collateralLovelace: FEE_COLLATERAL,
+    vaultUtxo: await only(vaultNftDid), ...over,
+  }));
+}
+function fireTxDidFee(u: UTxO) {
+  return withFeePayerWallet(u, async () => buildScheduleFireTx({
+    lucid, vaultUtxo: await only(vaultNftDid), shardUtxos: await lampShardUtxos(), scheduleId: scheduleIdDid,
+    vaultScript, shardScript, lampPolicyId: lampPolicy, lampAssetName: LAMP_NAME, network: NET,
+    tipPosixMs: BigInt(nowMs()), refScriptUtxos: refUtxos, collateralLovelace: FEE_COLLATERAL,
+  } as any));
+}
+let scheduleIdDid: string;
 
 // Purpose trong câu lỗi đánh giá của Lucid: `Spend[i]` = một input script (két / shard / shard GB),
 // `Withdraw[i]` = mục rút (ở đây chỉ `commit`). Ca âm khẳng định ĐÚNG purpose, không chỉ "có bác".
@@ -406,6 +510,52 @@ describe("ScheduleGen v2.0 e2e — đăng ký stake commit → ký → bắn tr�
     expect(gs.remaining).toBe(GB / 16n - 2n * M);
   }, SLOW);
 
+  // ── Chủ DID (Script) + ví trả phí bên thứ ba: ca dương/âm ở tầng bộ dựng + validator thật ──
+  // VaultTxAPI ▸ `/tx/schedule-commit` với `fee_payer`: ví lucid chỉ có UTxO trả phí, thế chấp tường
+  // minh, quyền chủ = rút 0 từ `did_stake`. Mọi ca âm dưới đây dựng Y HỆT ca dương, chỉ khác một vế.
+  it("DID+fee_payer — commit XANH: input ngoài script CHỈ là UTxO trả phí; thế chấp = UTxO đó; mục rút = commit + did_stake; không khoá chủ ở required_signers", async () => {
+    const fee = await feePayerUtxo();
+    const res = await commitTxDidFee(fee);
+    const sh = shapeOf(res.tx.toCBOR());
+    const vaultIn = await only(vaultNftDid);
+    expect(sh.inputs, "UTxO trả phí và két phải là input").toEqual(expect.arrayContaining([outRefKey(fee), outRefKey(vaultIn)]));
+    // Mọi input còn lại phải là UTxO script (két · shard LAMP · shard GB), KHÔNG UTxO ví nào khác.
+    const walletIns = (await Promise.all(sh.inputs.map(async i => {
+      const [h, ix] = i.split("#");
+      const u = (await emulator.getUtxosByOutRef([{ txHash: h!, outputIndex: Number(ix) }]))[0]!;
+      return getAddressDetails(u.address).paymentCredential?.type === "Key" ? i : null;
+    }))).filter(x => x !== null);
+    expect(walletIns).toEqual([outRefKey(fee)]);
+    expect(sh.collateral).toEqual([outRefKey(fee)]);
+    expect(sh.withdrawals).toBe(2);                       // `commit` + `did_stake`
+    expect(sh.signers).not.toContain(pkh(deployer));
+    // Ký: ví trả phí (input + thế chấp) và khoá của script native `did_stake`. Không khoá nào khác.
+    await submitKeys(res.tx, [feeAcc, didKey]);
+    scheduleIdDid = res.scheduleId;
+    const d = decodeVaultDatum((await only(vaultNftDid)).datum!);
+    expect(d.owner).toEqual({ Script: [didHash] });
+    expect(d.gen_schedules).toHaveLength(1);
+    expect(d.lamp_locked).toBe(N * LAMBDA);
+  }, SLOW);
+
+  it("DID+fee_payer — commit CỰC ĐỐI (thiếu ký ví trả phí): cùng tx, chỉ ký did_stake ⟹ ledger bác", async () => {
+    // Két DID đã commit ở ca trên; dựng lại trên chính trạng thái hiện tại bằng một UTxO trả phí mới.
+    const fee = await feePayerUtxo();
+    const res = await commitTxDidFee(fee);
+    expect(await rejectionOf(submitKeys(res.tx, [didKey]))).toMatch(/Missing vkey witness/i);
+  }, SLOW);
+
+  it("DID+fee_payer — commit CỰC ĐỐI (thiếu ký did_stake): cùng tx, chỉ ký ví trả phí ⟹ ledger bác", async () => {
+    const fee = await feePayerUtxo();
+    const res = await commitTxDidFee(fee);
+    expect(await rejectionOf(submitKeys(res.tx, [feeAcc]))).toMatch(/Invalid native script witness/i);
+  }, SLOW);
+
+  it("DID+fee_payer — commit CỰC ĐỐI (không nhân chứng chủ): chủ script mà ownerAuth vắng ⟹ bộ dựng NÉM OWNER_SCRIPT_WITNESS_UNAVAILABLE", async () => {
+    const fee = await feePayerUtxo();
+    await expect(commitTxDidFee(fee, { ownerAuth: undefined })).rejects.toThrow(/OWNER_SCRIPT_WITNESS_UNAVAILABLE/);
+  }, SLOW);
+
   it("CỰC ĐỐI bắn: batch ghi lệch 1 nanogic ⟹ validator két bác", async () => {
     goToEpoch(E1 + 2n);
     await expectScriptRejected(fireTx(d => ({
@@ -440,6 +590,36 @@ describe("ScheduleGen v2.0 e2e — đăng ký stake commit → ký → bắn tr�
     expect(d.magic_batches.map(b => b.created_epoch)).toEqual([E1 + 3n, E1 + 4n]);
     expect(d.usage_window.slice(0, 3).map(u => u.generated)).toEqual([M, M, M]);
     expect(d.gen_schedules[0]!.fired_count).toBe(3n);
+  }, SLOW);
+
+  // Két DID đã commit ở E1; nay E1+4. Bắn không cần chủ (permissionless): chỉ ví trả phí ký.
+  it("DID+fee_payer — fire XANH: không mục rút, không required_signers; input ví CHỈ là UTxO trả phí; thế chấp = UTxO đó; chỉ ví trả phí ký", async () => {
+    const fee = await feePayerUtxo();
+    const res = await fireTxDidFee(fee);
+    const sh = shapeOf(res.tx.toCBOR());
+    expect(sh.withdrawals).toBe(0);
+    expect(sh.signers).toEqual([]);
+    expect(sh.collateral).toEqual([outRefKey(fee)]);
+    const walletIns = (await Promise.all(sh.inputs.map(async i => {
+      const [h, ix] = i.split("#");
+      const u = (await emulator.getUtxosByOutRef([{ txHash: h!, outputIndex: Number(ix) }]))[0]!;
+      return getAddressDetails(u.address).paymentCredential?.type === "Key" ? i : null;
+    }))).filter(x => x !== null);
+    expect(walletIns).toEqual([outRefKey(fee)]);
+    expect(res.firesInTx).toBeGreaterThanOrEqual(1);
+    // CỰC ĐỐI (cùng tx, đi TRƯỚC ca dương vì lượt bắn thật dùng hết lệnh đến hạn): thiếu chữ ký ví trả phí
+    // (chỉ khoá did_stake ký — fire không cần chủ) ⟹ ledger bác; rồi cặp dương: chỉ ví trả phí ký ⟹ nhận.
+    const neg = await rejectionOf(submitKeys(res.tx, [didKey]));
+    // "Missing", không phải "Extraneous": ledger đòi chữ ký ví trả phí (input + thế chấp) mà không thấy.
+    expect(neg).toMatch(/Missing vkey witness/i);
+    // `sign.withPrivateKey` GHI VÀO bộ dựng: chữ ký did_stake của lần nộp âm còn nằm lại trong `res.tx`
+    // và bị ledger bác "Extraneous vkey witness" ở lần nộp dương. Nên dựng lại tx từ cùng UTxO trả phí
+    // (lần nộp âm bị bác ⟹ UTxO đó vẫn chưa tiêu) rồi mới ký-nộp cặp dương.
+    const res2 = await fireTxDidFee(fee);
+    await submitKeys(res2.tx, [feeAcc]);
+    const d = decodeVaultDatum((await only(vaultNftDid)).datum!);
+    expect(d.owner).toEqual({ Script: [didHash] });
+    expect(d.gen_schedules[0]!.fired_count).toBe(BigInt(res2.firesInTx));
   }, SLOW);
 });
 

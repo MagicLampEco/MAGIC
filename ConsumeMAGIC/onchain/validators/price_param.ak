@@ -433,6 +433,32 @@ test price_param_ordinary_row_demand_out_of_band_fail() fail {
   pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_rotate_datum(6, 1_000_000_000, 2_000_000_001)))
 }
 
+// ── ĐƠN VỊ PHÍ mã 20 (`platform_fee_unit`, 2026-10-09): cổng phải NỐI vào PostPrice ──
+//    Cùng lý do với bốn bài mã 7 ở trên: bài của `pricing.ak` đo cổng, cặp này đo việc
+//    đường ghi beacon THẬT đi qua cổng. Hai bài khác nhau ĐÚNG một số: base 10⁶ ↔ 10⁶ + 1.
+
+fn pp_fee_datum(epoch: Int, fee_base: Int) -> PriceParam {
+  PriceParam {
+    op_prices: [
+      OpPrice { op_type: 8, base_price: 10_000_000, demand_mult: 2_000_000_000 },
+      OpPrice { op_type: 20, base_price: fee_base, demand_mult: 1_000_000_000 },
+    ],
+    m_min: 500_000_000,
+    m_max: 2_000_000_000,
+    epoch: epoch,
+  }
+}
+
+test price_param_platform_fee_row_at_unit_happy() {
+  pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_fee_datum(6, 1_000_000)))
+}
+
+test price_param_platform_fee_row_base_off_by_one_fail() fail {
+  // Committee đổi giá trị của MỘT đơn vị phí từ 0,001 MAGIC lên 0,001000001 MAGIC —
+  // trong band, dưới trần, qua GATE. Chỉ `base_price_pinned_if_unit` chặn được.
+  pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_fee_datum(6, 1_000_001)))
+}
+
 test price_param_ada_topup_with_token_happy() {
   // Đường TOP-UP ADA còn nguyên: nạp thêm ADA (2 → 9 tADA) trong khi phần non-ADA
   // giữ y hệt → PASS. Đây là lý do ràng buộc ADA để `>=` chứ không gộp vào phép `==`.

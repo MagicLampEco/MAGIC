@@ -333,9 +333,22 @@ export const MAX_OP_PRICES = 16;
  * giữ. Bản rút gọn để đọc mã này: mã 7 là `did.rotate`, một THAO TÁC AN NINH. Một hệ
  * số bám theo tải làm nó ĐẮT LÊN đúng lúc nhiều người cùng phải xoay khoá (đợt lộ
  * khoá hàng loạt), và cái đó tự khuếch đại. Trần `m_max = 2.0×` chặn ĐỘ LỚN, không
- * chặn CHIỀU.
+ * chặn CHIỀU. Mã 20 (`platform_fee_unit`) vào dải vì lý do khác: nó là ĐƠN VỊ ĐO, xem
+ * `PLATFORM_FEE_OP_TYPE`.
  */
-export const FIXED_PRICE_OP_TYPES: readonly bigint[] = Object.freeze([7n]);
+export const FIXED_PRICE_OP_TYPES: readonly bigint[] = Object.freeze([7n, 20n]);
+
+/**
+ * `op_type = 20` — `platform_fee_unit` (lớp `fee`). Khớp BIT với `pricing.ak` ▸
+ * `platform_fee_op_type` (P8, cùng thay đổi). Dòng giá của mã này là ĐỊNH NGHĨA đơn vị,
+ * không phải một mức giá: `base_price === PLATFORM_FEE_BASE_PRICE` (PRICE-018) VÀ
+ * `demand_mult === Q` (PRICE-017, mã nằm trong `FIXED_PRICE_OP_TYPES`). Lý do ở docstring
+ * bên Aiken.
+ */
+export const PLATFORM_FEE_OP_TYPE = 20n;
+
+/** 10⁶ nanogic = 0,001 MAGIC cho MỘT đơn vị `platform_fee_unit`. Khớp `pricing.ak` ▸ `platform_fee_base_price`. */
+export const PLATFORM_FEE_BASE_PRICE = 1_000_000n;
 
 /**
  * Trần TRÊN của `base_price` — khớp `pricing.ak:max_base_price` (P8, cùng commit).
@@ -385,6 +398,8 @@ export interface PriceParamLike {
  *    `demand_mult`, không kẹp `base_price`.
  *  - PRICE-017 GIÁ CỐ ĐỊNH: `op_type ∈ FIXED_PRICE_OP_TYPES ⇒ demand_mult === Q`.
  *    KHÔNG suy ra được từ PRICE-011: một hệ số 1,5× nằm gọn trong band.
+ *  - PRICE-018 ĐƠN VỊ PHÍ: `op_type === PLATFORM_FEE_OP_TYPE ⇒ base_price ===
+ *    PLATFORM_FEE_BASE_PRICE` (gương `pricing.ak` ▸ `base_price_pinned_if_unit`).
  *  - PRICE-012 `epoch ≥ 0`.
  *  - PRICE-013 trần 16 dòng. `valid_param` chạy MỘT LẦN / Engage input ⇒ bảng vài
  *    nghìn dòng làm MỌI tx consume vượt ex-unit = DoS toàn cơ chế.
@@ -405,7 +420,7 @@ export interface PriceParamLike {
  * Aiken và JS chỉ đúng khi MỌI toán hạng ≥ 0 (Aiken `/` là floor, JS BigInt `/` là
  * trunc-về-0; chúng lệch nhau trên số âm).
  *
- * @throws PRICE-010..PRICE-017 (mã kèm chỉ số dòng khi lỗi thuộc về một dòng cụ thể).
+ * @throws PRICE-010..PRICE-018 (mã kèm chỉ số dòng khi lỗi thuộc về một dòng cụ thể).
  */
 export function assertValidPriceParam(pp: PriceParamLike): void {
   if (pp.m_min !== M_MIN_Q || pp.m_max !== M_MAX_Q) {
@@ -460,6 +475,14 @@ export function assertValidPriceParam(pp: PriceParamLike): void {
           `an ninh: giá của nó không được nhúc nhích theo tải, CẢ HAI CHIỀU — rẻ đi lúc ` +
           `tải thấp cũng là đắt lên lúc tải cao. Band [m_min, m_max] KHÔNG bắt hộ luật ` +
           `này (${row.demand_mult} vẫn có thể nằm trong band).`,
+      );
+    }
+    if (row.op_type === PLATFORM_FEE_OP_TYPE && row.base_price !== PLATFORM_FEE_BASE_PRICE) {
+      throw new Error(
+        `PRICE-018: dòng ${i} có op_type=${row.op_type} (platform_fee_unit) nên base_price ` +
+          `phải ĐÚNG BẰNG ${PLATFORM_FEE_BASE_PRICE} nanogic (định nghĩa 1 đơn vị = 0,001 MAGIC), ` +
+          `nhận ${row.base_price}. Bên tích hợp quy phí ra op_count theo đúng giá trị này; đổi nó ` +
+          `là đổi lặng lẽ số MAGIC mỗi lượt thu. GATE/trần/band KHÔNG bắt hộ luật này.`,
       );
     }
     if (row.base_price > MAX_BASE_PRICE) {

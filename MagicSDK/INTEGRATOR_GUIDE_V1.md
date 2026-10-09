@@ -582,6 +582,9 @@ sổ mã do Registry giữ.
 | 3 | một lần lưu trữ | có |
 | 4 | một lần tính toán | có |
 | 5 · 6 | — | **đã RÚT 2026-09-21**, hai số để trống vĩnh viễn |
+| 7 | `did.rotate` (xoay khoá DID) | có — **giá cố định**, hệ số cầu khoá ở 1,0× |
+| 8 | `did.transfer` | có |
+| 20 | `platform_fee_unit` — một đơn vị phí nền tảng | có — **định nghĩa đơn vị, không phải giá**: validator ép `base_price = 10⁶` nanogic (0,001 MAGIC) và hệ số cầu = 1,0× |
 
 > ⚠️ **Mã 3 và 4 đếm LẦN, không đếm MB** — bảng này từng ghi "(MB)" và đó là một đơn vị mã
 > chưa bao giờ tính. `required_for` nhân `op_count` như một bội số thuần; không chỗ nào quy
@@ -596,7 +599,14 @@ sổ mã do Registry giữ.
 > lệ ở mã của một nhà tích hợp. Lý do đầy đủ: `ConsumeMAGIC/CONTRACT.md §A`.
 
 Thêm dòng vào bảng **không** cần deploy lại gì: `op_prices` nằm trong **datum** của beacon, post
-lại bằng `buildPostPriceTx` là xong.
+lại bằng `buildPostPriceTx` là xong. Ngoại lệ là mã 20: chốt `base_price = 10⁶` nằm trong mã
+`consume`/`price_param`/`price_nft`, nên chỉ cụm biên dịch từ bản có chốt đó mới bảo đảm một đơn
+vị mã 20 đúng bằng 0,001 MAGIC. Đừng dùng mã 20 trên một cụm cũ hơn.
+
+Dòng mã 20 có mặt trong bảng là do beacon mẫu đặt; validator không bắt nó phải có mặt. Gặp
+`CONSUME-007` với mã 20 nghĩa là beacon hiện hành không có dòng đó. Đừng chuyển phí sang một mã
+khác cùng giá gốc (ví dụ mã 2): các mã khác co giãn theo cầu, nên một đơn vị của chúng không còn
+là 0,001 MAGIC.
 
 > `op_type` đã lưu hành trên chuỗi thì **không bao giờ đổi nghĩa được** — mọi UTxO mang số đó
 > sẽ đổi nghĩa cùng lúc, và không hoàn tác được. Cần một đại lượng mới thì xin mã mới, đừng

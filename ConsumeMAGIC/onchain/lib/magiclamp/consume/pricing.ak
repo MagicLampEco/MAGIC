@@ -31,6 +31,24 @@ pub const m_min_q: Int = 500_000_000
 
 pub const m_max_q: Int = 2_000_000_000
 
+/// `op_type = 20` — `platform_fee_unit`, lớp `fee`, do sổ op_type cấp (`MagicLampEco/Registry`
+/// ▸ `Specs/Resource-Dictionary.md` §2, thư cấp số 2026-10-09). MỘT mã dùng chung cho phí
+/// nền tảng của mọi bên tích hợp: phí VND quy ra `op_count` đơn vị, mỗi đơn vị
+/// `platform_fee_base_price` nanogic.
+///
+/// Dòng giá của mã này KHÔNG phải một mức giá, mà là ĐỊNH NGHĨA của đơn vị: 1 đơn vị =
+/// 10⁶ nanogic = 0,001 MAGIC. Hai vế định nghĩa đó, cả hai ép ở lúc BIÊN DỊCH:
+///   · `demand_mult == q` — mã nằm trong `fixed_price_op_types` (đơn vị không co giãn theo tải);
+///   · `base_price == platform_fee_base_price` — `base_price_pinned_if_unit`.
+/// Thiếu vế thứ hai thì committee đổi được giá trị của một đơn vị mà bên tích hợp không
+/// biết: họ quy phí VND ra `op_count` theo 0,001 MAGIC/đơn vị, nên đổi `base_price` là đổi
+/// lặng lẽ số MAGIC mỗi lượt thu, không cần chạm tới dòng nào của họ.
+pub const platform_fee_op_type: Int = 20
+
+/// 10⁶ nanogic = 0,001 MAGIC — giá trị của MỘT đơn vị `platform_fee_unit`. Xem
+/// `platform_fee_op_type`. Qua được GATE `base_price × m_min ≥ q` (10⁶ × 0,5·10⁹ = 5·10¹⁴).
+pub const platform_fee_base_price: Int = 1_000_000
+
 /// Những `op_type` bị ép GIÁ CỐ ĐỊNH: `demand_mult` của dòng đó PHẢI đúng bằng `q`
 /// (1.0×), nên giá của chúng KHÔNG nhúc nhích theo tải.
 ///
@@ -59,7 +77,10 @@ pub const m_max_q: Int = 2_000_000_000
 ///
 /// `base_price × m_min ≥ q` VẪN áp cho dòng cố định (xem `valid_param`): luật này
 /// chặn giá-về-0, nó độc lập với việc hệ số có đứng yên hay không.
-pub const fixed_price_op_types: List<Int> = [7]
+///
+/// `op_type = 20` (`platform_fee_unit`, thêm 2026-10-09) vào dải này vì một lý do KHÁC
+/// mã 7: nó là ĐƠN VỊ ĐO chứ không phải dịch vụ. Xem `platform_fee_op_type`.
+pub const fixed_price_op_types: List<Int> = [7, platform_fee_op_type]
 
 /// Trần số dòng trong bảng giá `op_prices`.
 ///
@@ -251,7 +272,8 @@ fn increasing_after(prev: Int, rest: List<OpPrice>) -> Bool {
 ///   BẢNG GIÁ: len(op_prices) ≤ max_op_prices ∧ op_type TĂNG NGẶT (dạng chuẩn tắc);
 ///   GATE-giá-tối-thiểu: MỌI op có base_price × m_min ≥ q;
 ///   BAND THEO TỪNG DÒNG: MỌI op có m_min ≤ op.demand_mult ≤ m_max;
-///   GIÁ CỐ ĐỊNH: op_type ∈ fixed_price_op_types ⇒ op.demand_mult == q.
+///   GIÁ CỐ ĐỊNH: op_type ∈ fixed_price_op_types ⇒ op.demand_mult == q;
+///   ĐƠN VỊ PHÍ: op_type == platform_fee_op_type ⇒ op.base_price == platform_fee_base_price.
 /// Lý do các tầng:
 ///   - Pin m_min/m_max: PostPrice cẩu thả đặt m_max khổng lồ ⇒ price = base×demand/q nổ
 ///     ~1e6× (verified). Check tương-đối (m_min≤demand≤m_max) KHÔNG chặn được vì demand
@@ -311,9 +333,25 @@ pub fn valid_param(pp: PriceParam) -> Bool {
           op.demand_mult >= pp.m_min,
           op.demand_mult <= pp.m_max,
           demand_mult_pinned_if_fixed(op),
+          base_price_pinned_if_unit(op),
         }
       },
     ),
+  }
+}
+
+/// Dòng `op_type == platform_fee_op_type` ⇒ `base_price` PHẢI == `platform_fee_base_price`.
+/// Dòng khác ⇒ luật này không nói gì.
+///
+/// Đứng trong `valid_param` nên phủ cả BA lối vào của một dòng giá: `price_param.spend`
+/// (PostPrice), `price_nft.mint` (beacon genesis) và `consume` ▸ `validate_consume` (mọi
+/// lần đọc beacon). Hàm riêng có tên vì cùng lý do với `demand_mult_pinned_if_fixed`:
+/// đột biến nó thành `True` là phép đo trực tiếp xem nó có đang canh gì không.
+pub fn base_price_pinned_if_unit(op: OpPrice) -> Bool {
+  if op.op_type == platform_fee_op_type {
+    op.base_price == platform_fee_base_price
+  } else {
+    True
   }
 }
 
@@ -927,7 +965,106 @@ test required_for_fixed_op_has_no_count_cap() {
 test fixed_price_op_types_contains_rotate() {
   // Ghim NỘI DUNG của hằng, không chỉ ghim hành vi: đổi danh sách mà quên đổi luật
   // (hoặc ngược lại) thì bài này đỏ trước khi một beacon sai lên chuỗi.
-  list.has(fixed_price_op_types, 7) && !list.has(fixed_price_op_types, 8)
+  // Mã 20 (`platform_fee_unit`) vào dải từ 2026-10-09; 19 và 21 kẹp hai bên để một
+  // bản viết thành dải `>= 20` hay `<= 20` cũng đỏ ở đây.
+  and {
+    list.has(fixed_price_op_types, 7),
+    list.has(fixed_price_op_types, 20),
+    !list.has(fixed_price_op_types, 8),
+    !list.has(fixed_price_op_types, 19),
+    !list.has(fixed_price_op_types, 21),
+    platform_fee_op_type == 20,
+    platform_fee_base_price == 1_000_000,
+  }
+}
+
+// ── ĐƠN VỊ PHÍ `platform_fee_unit` (mã 20, 2026-10-09) ─────────────────────────
+//
+// Định nghĩa đơn vị = HAI vế: `base_price == 10⁶` VÀ `demand_mult == q`. Mỗi vế một cặp
+// bài; mỗi bài âm đổi ĐÚNG MỘT trường so với khuôn dương. Dòng hàng xóm là mã 21
+// (dòng THƯỜNG, kề ngay sau 20) để bài "mã khác vẫn co giãn" phân biệt được luật
+// `== 20` với một bản viết nhầm thành dải.
+//
+// Vector chuẩn: `ConsumeMAGIC/tests/vectors.ts` ▸ `TV_PLATFORM_FEE_ROW` — CÙNG các con số
+// dưới đây; Aiken không đọc tệp đó, nên số được chép tay và hai bên phải sửa cùng lúc.
+
+fn pp_fee_pair(fee_base: Int, fee_demand: Int, other_base: Int, other_demand: Int) -> PriceParam {
+  PriceParam {
+    op_prices: [
+      OpPrice { op_type: 20, base_price: fee_base, demand_mult: fee_demand },
+      OpPrice { op_type: 21, base_price: other_base, demand_mult: other_demand },
+    ],
+    m_min: m_min_q,
+    m_max: m_max_q,
+    epoch: 100,
+  }
+}
+
+test platform_fee_row_at_unit_happy() {
+  // DƯƠNG: mã 20 đúng định nghĩa, mã 21 ở giá thường 1.0×.
+  // TV-PLATFORM-FEE-ROW ca 0. Kèm số tiền: 1 đơn vị = 10⁶ nanogic, 2.500 đơn vị = 2,5 MAGIC.
+  let pp = pp_fee_pair(1_000_000, q, 10_000_000, q)
+  and {
+    valid_param(pp),
+    required_for(pp, 20, 1) == Some(1_000_000),
+    required_for(pp, 20, 2_500) == Some(2_500_000_000),
+  }
+}
+
+test platform_fee_row_base_one_above_rejected() {
+  // ÂM: 10⁶ + 1. Qua GATE, dưới trần, trong band — chỉ `base_price_pinned_if_unit` bắt.
+  // TV-PLATFORM-FEE-ROW ca 1.
+  !valid_param(pp_fee_pair(1_000_001, q, 10_000_000, q))
+}
+
+test platform_fee_row_base_one_below_rejected() {
+  // ÂM: 10⁶ − 1. Chiều xuống: 999_999 × m_min = 4,99·10¹⁴ ≥ q nên GATE không bắt hộ.
+  // TV-PLATFORM-FEE-ROW ca 2.
+  !valid_param(pp_fee_pair(999_999, q, 10_000_000, q))
+}
+
+test platform_fee_row_demand_above_q_rejected() {
+  // ÂM: base đúng 10⁶, hệ số 1.5× (TRONG band) — chỉ `demand_mult_pinned_if_fixed` bắt,
+  // tức đo việc mã 20 đã vào `fixed_price_op_types`. TV-PLATFORM-FEE-ROW ca 3.
+  !valid_param(pp_fee_pair(1_000_000, 1_500_000_000, 10_000_000, q))
+}
+
+test platform_fee_row_demand_at_m_min_rejected() {
+  // ÂM: chiều rẻ đi — 0.5× đúng biên dưới band. TV-PLATFORM-FEE-ROW ca 4.
+  !valid_param(pp_fee_pair(1_000_000, m_min_q, 10_000_000, q))
+}
+
+test platform_fee_neighbour_row_still_elastic() {
+  // ĐỐI CHỨNG chống vá quá tay: mã 21 (kề 20) giữ base 10⁶ + 1 VÀ hệ số 2.0× — cả hai
+  // đều là thứ bị cấm ở mã 20 — vẫn hợp lệ. TV-PLATFORM-FEE-ROW ca 5.
+  // Mã 19 ở phía dưới, cùng hai trường lạ, cũng hợp lệ.
+  let below =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 19, base_price: 1_000_001, demand_mult: m_max_q },
+        OpPrice { op_type: 20, base_price: 1_000_000, demand_mult: q },
+      ],
+      m_min: m_min_q,
+      m_max: m_max_q,
+      epoch: 100,
+    }
+  and {
+    valid_param(pp_fee_pair(1_000_000, q, 1_000_001, m_max_q)),
+    valid_param(below),
+  }
+}
+
+test base_price_pinned_if_unit_direct() {
+  // Gọi thẳng helper: không có `valid_param` bao ngoài, nên một bài âm đỏ vì vế KHÁC
+  // của `valid_param` không thể lẫn vào đây.
+  and {
+    base_price_pinned_if_unit(OpPrice { op_type: 20, base_price: 1_000_000, demand_mult: q }),
+    !base_price_pinned_if_unit(
+      OpPrice { op_type: 20, base_price: 1_000_001, demand_mult: q },
+    ),
+    !base_price_pinned_if_unit(OpPrice { op_type: 20, base_price: 999_999, demand_mult: q }),
+    base_price_pinned_if_unit(OpPrice { op_type: 21, base_price: 7, demand_mult: q }),
+  }
 }
 
 // ── ConsumeMany: required_for_pairs / valid_pairs (THÊM 2026-10-03) ──────────

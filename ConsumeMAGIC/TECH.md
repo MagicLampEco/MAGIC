@@ -164,7 +164,7 @@ window_origin_ms                 : gốc lưới epoch theo mạng (POSIX ms), t
 | W-CM-2 | Mọi input do SCRIPT khoá chỉ ở `own_hash` hoặc `vault_script_hash` — chặn double-satisfaction XUYÊN-INSTANCE | `util.script_inputs_confined_to` |
 | W-CM-3 | Mọi input@engage mang ĐÚNG 1 thread NFT dưới `own_hash` (cổng định danh, fail-closed với UTxO giả) | `single_thread_nft` trong `list.all` đầu `spend` |
 | W-CM-4 | Beacon PriceParam nằm đúng `price_param_script_hash` và mang đúng 1 NFT `(price_nft_policy, price_nft_name)` | `read_price_param` |
-| W-CM-5 | `pricing.valid_param(pp)` — **13 mệnh đề**: pin `m_min`/`m_max` về hằng, cap 16 dòng, `op_type` tăng ngặt, GATE `base_price × m_min ≥ Q`, trần `base_price`, band `demand_mult` mỗi dòng, giá cố định cho `fixed_price_op_types`, `epoch ≥ 0`. Bảng đầy đủ: `CONTRACT.md §B1` · tóm tắt + lý do (đếm lại từ mã): §2.4 dưới | `pricing.valid_param` |
+| W-CM-5 | `pricing.valid_param(pp)` — **14 mệnh đề**: pin `m_min`/`m_max` về hằng, cap 16 dòng, `op_type` tăng ngặt, GATE `base_price × m_min ≥ Q`, trần `base_price`, band `demand_mult` mỗi dòng, giá cố định cho `fixed_price_op_types`, `base_price` ghim cho mã đơn vị 20, `epoch ≥ 0`. Bảng đầy đủ: `CONTRACT.md §B1` · tóm tắt + lý do (đếm lại từ mã): §2.4 dưới | `pricing.valid_param` |
 | W-CM-6 | `0 ≤ current_epoch − pp.epoch ≤ max_price_stale` | hai `expect` sau `util.get_epoch` |
 | W-CM-7 | **`total_burned == total_required`** (DẤU BẰNG — over-burn và under-burn đều bị từ chối). `total_required` gộp qua MỌI Engage input; `total_burned` gộp qua các `vault_ref` PHÂN BIỆT | `sum_required_over_engage_inputs` · `distinct_vault_refs_over_engage_inputs` · `sum_burns_over_vault_refs` |
 | W-CM-8 | `#out@engage == #in@engage` | `util.count_inputs_at_script` / `util.count_outputs_at_script` |
@@ -225,12 +225,12 @@ File: `onchain/lib/magiclamp/consume/pricing.ak`
   — **fold-floor MỘT lần**, KHÔNG phải `price_of × op_count`. Lý do + hệ quả: MATH.md §2.2.
 - `q = 1_000_000_000` — khớp `ProtocolUtils.Q`.
 
-#### `valid_param(pp)` — 13 mệnh đề phân biệt, **không cái nào thừa**
+#### `valid_param(pp)` — 14 mệnh đề phân biệt, **không cái nào thừa**
 
 Bảng ràng buộc chuẩn tắc là **`CONTRACT.md §B1`** — đọc ở đó, đừng chép về đây. Bảng dưới đây
 dựng lại TỪ mã (`onchain/lib/magiclamp/consume/pricing.ak` ▸ `valid_param` +
 `demand_mult_pinned_if_fixed`), đếm từng mệnh đề `and { … }` — kể cả các mệnh đề nằm trong
-`list.all` (mỗi dòng bảng giá). Bản trước ghi "8 ràng buộc" và liệt 8 dòng; mã có **13** mệnh đề
+`list.all` (mỗi dòng bảng giá). Mệnh đề #14 (PRICE-018) thêm 2026-10-09 cùng mã 20. Bản trước ghi "8 ràng buộc" và liệt 8 dòng; mã lúc đó có **13** mệnh đề
 phân biệt — thiếu 5: `op.base_price >= 0` (tường minh, không chỉ suy ra từ #9), `op.base_price
 <= max_base_price` (PRICE-016), `demand_mult_pinned_if_fixed` (PRICE-017), và dòng cũ
 `pp.demand_mult ∈ [pp.m_min, pp.m_max]` đã CHẾT — sau `CC-LOAD-COUNT-UNIT` (2026-09-24)
@@ -250,7 +250,8 @@ phân biệt — thiếu 5: `op.base_price >= 0` (tường minh, không chỉ su
 | 10 | `op.base_price <= max_base_price` (mỗi dòng) | PRICE-016 | trần TRÊN — không cái nào ở #8/#9 chặn giá vọt lên; thiếu nó là khoá được quyền của người khác bằng giá (Nợ #32) |
 | 11 | `op.demand_mult >= pp.m_min` (mỗi dòng) | PRICE-011 | band DƯỚI, nay ở mức TỪNG DÒNG (`CC-LOAD-COUNT-UNIT`) — trước 2026-09-24 áp ở mức `PriceParam` |
 | 12 | `op.demand_mult <= pp.m_max` (mỗi dòng) | PRICE-011 | band TRÊN, cùng lý do #11 |
-| 13 | `demand_mult_pinned_if_fixed(op)` (mỗi dòng) | PRICE-017 | `op_type ∈ fixed_price_op_types` (hiện `[7]`) ⇒ `demand_mult == q` — giá KHÔNG nhúc nhích theo tải cho thao tác an ninh (`ConsumeMAGIC/CONTRACT.md §A`) |
+| 13 | `demand_mult_pinned_if_fixed(op)` (mỗi dòng) | PRICE-017 | `op_type ∈ fixed_price_op_types` (hiện `[7, 20]`) ⇒ `demand_mult == q` — giá KHÔNG nhúc nhích theo tải cho thao tác an ninh (mã 7) và cho đơn vị phí nền tảng (mã 20) (`ConsumeMAGIC/CONTRACT.md §A`) |
+| 14 | `base_price_pinned_if_unit(op)` (mỗi dòng) | PRICE-018 | `op_type == platform_fee_op_type` (20) ⇒ `base_price == platform_fee_base_price` (10⁶ nanogic). Mã 20 là ĐƠN VỊ ĐO, không phải mức giá: thiếu mệnh đề này, committee đổi được giá trị một đơn vị phí mà bên tích hợp vẫn tính theo 0,001 MAGIC. Mệnh đề chỉ áp khi bảng CÓ dòng 20; không có dòng 20 thì tiêu mã 20 chết ở `required_for` (đóng an toàn) |
 
 > ⚠ **Nhiều mệnh đề trông "thừa" nếu chỉ đọc bảng cũ, ngắn hơn.** Bản cũ nhất chỉ liệt
 > `m_min ≥ 0` / `m_min ≤ m_max` / clamp mức `PriceParam` / `base_price ≥ 0`; bản kế đó thêm

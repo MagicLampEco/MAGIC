@@ -10,7 +10,8 @@ import { Data } from "@lucid-evolution/lucid";
 import { buildPostPriceTx, postPriceRedeemerCbor } from "../offchain/src/postPrice.js";
 import { PriceParamRedeemerSchema, encodePriceParam } from "../offchain/src/types.js";
 import type { PriceParamT } from "../offchain/src/types.js";
-import { M_MIN_Q, M_MAX_Q, Q } from "@magiclamp/consumemagic-pricing";
+import { M_MIN_Q, M_MAX_Q, Q, assertValidPriceParam, requiredForOp } from "@magiclamp/consumemagic-pricing";
+import { TV_PLATFORM_FEE_ROW } from "./vectors.js";
 import { epochStartMs } from "@magiclamp/protocol-utils";
 
 // ── 1. Hợp đồng nhị phân của redeemer ────────────────────────────────────────
@@ -135,6 +136,17 @@ describe("cổng buildPostPriceTx", () => {
     ).rejects.toThrow(/POSTPRICE-007/);
   });
 
+  it("POSTPRICE-007 chặn dòng mã 20 (platform_fee_unit) lệch đơn vị 10⁶ — PRICE-018", async () => {
+    // Builder phải từ chối TRƯỚC khi ký, không để `price_param.spend` từ chối trên chuỗi.
+    await expect(
+      buildPostPriceTx(
+        params({
+          newOpPrices: [...oldDatum.op_prices, { op_type: 20n, base_price: 1_000_001n, demand_mult: Q }],
+        }),
+      ),
+    ).rejects.toThrow(/POSTPRICE-007.*PRICE-018/);
+  });
+
   it("POSTPRICE-009 top-up âm = bào mòn ADA của beacon", async () => {
     await expect(buildPostPriceTx(params({ topUpLovelace: -1n }))).rejects.toThrow(
       /POSTPRICE-009/,
@@ -145,5 +157,27 @@ describe("cổng buildPostPriceTx", () => {
     await expect(
       buildPostPriceTx(params({ priceBeaconUtxo: beacon({ datum: null }) })),
     ).rejects.toThrow(/POSTPRICE-010/);
+  });
+});
+
+// Vector chuẩn TV-PLATFORM-FEE-ROW: cùng số với bộ `platform_fee_*` ở `pricing.ak` (P8).
+describe("TV-PLATFORM-FEE-ROW — đơn vị phí mã 20", () => {
+  for (const c of TV_PLATFORM_FEE_ROW.cases) {
+    it(`${c.name} → ${c.valid ? "hợp lệ" : c.rule}`, () => {
+      const pp = {
+        op_prices: c.rows.map(([op_type, base_price, demand_mult]) => ({ op_type, base_price, demand_mult })),
+        m_min: M_MIN_Q,
+        m_max: M_MAX_Q,
+        epoch: 100n,
+      };
+      if (c.valid) expect(() => assertValidPriceParam(pp)).not.toThrow();
+      else expect(() => assertValidPriceParam(pp)).toThrow(new RegExp(String(c.rule)));
+    });
+  }
+  it("required: 1 đơn vị = 10⁶ nanogic, 2.500 đơn vị = 2,5 MAGIC", () => {
+    const [, base, dm] = TV_PLATFORM_FEE_ROW.cases[0].rows[0];
+    for (const r of TV_PLATFORM_FEE_ROW.required) {
+      expect(requiredForOp(20, r.op_count, { 20: { base_price: base, demand_mult: dm } })).toBe(r.nanogic);
+    }
   });
 });

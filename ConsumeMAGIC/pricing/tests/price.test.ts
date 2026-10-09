@@ -9,6 +9,8 @@ import {
   OP_CID,
   MVP_PRICE_TABLE,
   FIXED_PRICE_OP_TYPES,
+  PLATFORM_FEE_OP_TYPE,
+  PLATFORM_FEE_BASE_PRICE,
   computeLoadRaw,
   appendLoadHistory,
   smaLoad,
@@ -588,6 +590,58 @@ describe("assertValidPriceParam — cổng TRƯỚC khi post beacon", () => {
     expect(() =>
       assertValidPriceParam(ppOf([row(7n, 10_000_000n, Q)])),
     ).not.toThrow();
+  });
+
+  // ── PRICE-018 — mã 20 `platform_fee_unit`: base_price == 10⁶ VÀ demand_mult == Q ──
+  // Gương `pricing.ak` ▸ bộ `platform_fee_*`. Hàng xóm là mã 21 (dòng thường, kề 20).
+  it("hằng P8: mã 20 trong FIXED_PRICE_OP_TYPES, 19/21 thì không; đơn vị = 10⁶", () => {
+    expect(PLATFORM_FEE_OP_TYPE).toBe(20n);
+    expect(PLATFORM_FEE_BASE_PRICE).toBe(1_000_000n);
+    expect(FIXED_PRICE_OP_TYPES).toEqual([7n, 20n]);
+    expect(FIXED_PRICE_OP_TYPES).toContain(PLATFORM_FEE_OP_TYPE);
+    expect(FIXED_PRICE_OP_TYPES).not.toContain(19n);
+    expect(FIXED_PRICE_OP_TYPES).not.toContain(21n);
+  });
+
+  it("PRICE-018: mã 20 đúng 10⁶ + Q → qua", () => {
+    expect(() =>
+      assertValidPriceParam(ppOf([row(20n, 1_000_000n, Q), row(21n, 10_000_000n)])),
+    ).not.toThrow();
+  });
+
+  it("PRICE-018: mã 20 base 10⁶ + 1 → ném", () => {
+    expect(() =>
+      assertValidPriceParam(ppOf([row(20n, 1_000_001n, Q), row(21n, 10_000_000n)])),
+    ).toThrow(/PRICE-018/);
+  });
+
+  it("PRICE-018: mã 20 base 10⁶ − 1 → ném (GATE không bắt hộ: 999_999 × m_min ≥ Q)", () => {
+    expect(999_999n * M_MIN_Q >= Q).toBe(true);
+    expect(() =>
+      assertValidPriceParam(ppOf([row(20n, 999_999n, Q), row(21n, 10_000_000n)])),
+    ).toThrow(/PRICE-018/);
+  });
+
+  it("PRICE-017: mã 20 base đúng nhưng demand_mult 1,5× (trong band) → ném", () => {
+    expect(() =>
+      assertValidPriceParam(ppOf([row(20n, 1_000_000n, 1_500_000_000n)])),
+    ).toThrow(/PRICE-017/);
+  });
+
+  it("đối chứng: mã 19 và 21 mang base 10⁶ + 1 và hệ số 2,0× vẫn hợp lệ", () => {
+    expect(() =>
+      assertValidPriceParam(ppOf([
+        row(19n, 1_000_001n, M_MAX_Q),
+        row(20n, 1_000_000n, Q),
+        row(21n, 1_000_001n, M_MAX_Q),
+      ])),
+    ).not.toThrow();
+  });
+
+  it("giá mã 20: 1 đơn vị = 10⁶ nanogic, 2.500 đơn vị = 2,5 MAGIC (fold-floor một lần)", () => {
+    const table: PriceTable = { 20: { base_price: PLATFORM_FEE_BASE_PRICE, demand_mult: Q } };
+    expect(requiredForOp(20, 1n, table)).toBe(1_000_000n);
+    expect(requiredForOp(20, 2_500n, table)).toBe(2_500_000_000n);
   });
 });
 

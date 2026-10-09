@@ -1598,6 +1598,56 @@ test consume_negative_base_price_fail() fail {
   run(bad_pp, 1, 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
 }
 
+// ── ĐƠN VỊ PHÍ mã 20 (`platform_fee_unit`, 2026-10-09): lối ĐỌC beacon ──────────
+//    Beacon mang thêm dòng 20. Hai bài đầu tiêu một ẢNH (mã 1), KHÔNG tiêu mã 20: số
+//    tiền, burn và output y hệt `consume_happy`, nên khác nhau ĐÚNG ở base của dòng 20
+//    (10⁶ ↔ 10⁶ + 1) — bài âm không thể đỏ vì `Σburns ≠ required`. Bài thứ ba tiêu
+//    chính mã 20 để chứng minh đơn vị dùng được: 10 đơn vị = 10.000.000 nanogic.
+fn ct_pp_fee(epoch: Int, fee_base: Int) -> PriceParam {
+  PriceParam {
+    ..ct_pp(epoch),
+    op_prices: [
+      OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: 1_000_000_000 },
+      OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: 1_000_000_000 },
+      OpPrice { op_type: 20, base_price: fee_base, demand_mult: 1_000_000_000 },
+    ],
+  }
+}
+
+test consume_beacon_platform_fee_row_at_unit_happy() {
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(ct_pp_fee(6, 1_000_000), 1, 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
+}
+
+test consume_beacon_platform_fee_row_base_off_by_one_fail() fail {
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(ct_pp_fee(6, 1_000_001), 1, 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
+}
+
+test consume_platform_fee_ten_units_happy() {
+  // Tiêu mã 20 × 10 = 10 × 10⁶ = 10.000.000 nanogic (0,01 MAGIC); consumed_count 10 → 20.
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(20, 10, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(ct_pp_fee(6, 1_000_000), 1, 6, [eng], [vault], [ct_cont_output_ng(20, 6, 1, 10_000_000)], reds, rd, eng_ref, ct_in_datum)
+}
+
 // ── NEGATIVE: did_commit bị đổi ở output → immutable vi phạm → fail ─────────────
 test consume_did_commit_mutated_fail() fail {
   let pp = ct_pp(6)

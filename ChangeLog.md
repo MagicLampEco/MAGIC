@@ -5,6 +5,26 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-09 — ConsumeMAGIC: mã 20 `platform_fee_unit` — dòng giá là định nghĩa đơn vị (base 10⁶ + hệ số Q), ép ở mọi lối vào
+
+**Đổi gì.** (1) `pricing.ak`: hằng `platform_fee_op_type = 20`, `platform_fee_base_price = 1_000_000`; mã 20 vào
+`fixed_price_op_types` (nay `[7, platform_fee_op_type]`, ép `demand_mult == q`); chốt mới `base_price_pinned_if_unit` trong
+`valid_param` ép `base_price == platform_fee_base_price` cho dòng mã 20. Vì `valid_param` là cổng chung, chốt phủ cả ba lối
+một dòng giá được nhận: `price_param.spend` (PostPrice), `price_nft.mint` (beacon genesis), `consume` ▸ `validate_consume`
+(mọi lần đọc beacon). (2) P8: `ConsumeMAGIC/pricing/src/price.ts` — `PLATFORM_FEE_OP_TYPE`, `PLATFORM_FEE_BASE_PRICE`,
+`FIXED_PRICE_OP_TYPES = [7n, 20n]`, lỗi mới `PRICE-018` trong `assertValidPriceParam`; bộ dựng PostPrice
+(`POSTPRICE-007`) và keeper (`resolvePricePush`: lùi về bảng đang trên chuỗi + cảnh báo) từ chối dòng 20 lệch đơn vị trước khi
+ký. (3) `scripts/deploy/09_deploy_consume.ts`: bảng genesis thêm dòng 20 (10⁶, Q). (4) Ca kiểm theo cặp ở cả bốn tệp Aiken
+(`platform_fee_*`), `price.test.ts`, `post_price.test.ts`, `keeper/test_op_prices.ts`; vector `TV_PLATFORM_FEE_ROW`
+(`ConsumeMAGIC/tests/vectors.ts`).
+**Vì sao.** Sổ op_type cấp mã 20 cho phí nền tảng dùng chung: 1 đơn vị = 10⁶ nanogic = 0,001 MAGIC, bên tích hợp quy phí
+VND ra `op_count` theo đúng giá trị đó. Không ép `base_price` thì committee đổi được giá trị một đơn vị mà không bên tích hợp
+nào biết. Gỡ chốt `base_price` đi thì đúng 6 ca âm đỏ (đo bằng đột biến); bỏ 20 khỏi `fixed_price_op_types` thì 3 ca đỏ.
+**Cái gì gãy.** Script hash ĐỔI (bản chưa apply-param): `consume` `b15c2a0e…` → `0b341b6a…` (6.762 → 6.811 B),
+`price_nft` `8e75ac1d…` → `e6b2c75c…`, `price_param` `b424138c…` → `be4afabf…`. Hiệu lực từ lần deploy consume kế; không
+hồi tố beacon đang sống. Beacon nào đang mang dòng 20 với base ≠ 10⁶ hoặc hệ số ≠ Q sẽ không đọc được ở `consume` mới; bảng
+genesis của kho trước thay đổi này không có dòng 20 (beacon đang sống chưa đối chiếu trên chuỗi).
+
 ## 2026-10-09 — VaultTxAPI 1.2.0: `schedule_params` trong `/health`, `details.rule`, chủ DID + `fee_payer` trên ScheduleGen
 
 **Đổi gì.** (1) `GET /health ▸ vault_scopes[]` — mục `Schedule` mang `schedule_params { min_length, max_length,

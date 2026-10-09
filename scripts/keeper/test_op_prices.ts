@@ -60,6 +60,25 @@ const tooLow = applyOpPriceSet(beacon, parseOpPriceSet("7:1"));
 check("base_price=1 (base×m_min < Q) → assertValidPriceParam ném",
   throws(() => assertValidPriceParam(param(tooLow.rows))));
 
+// Mã 20 (`platform_fee_unit`): dòng giá là ĐỊNH NGHĨA đơn vị — base 10⁶ + Q. Keeper phải
+// từ chối DỰNG dòng sai (lùi về bảng đang trên chuỗi + cảnh báo PRICE-018), không gửi
+// một datum để `price_param.spend` từ chối trên chuỗi.
+const fee20 = resolvePricePush(param(beacon), parseOpPriceSet("20:1000000"), 4146n);
+check("mã 20 đúng 10⁶ → không cảnh báo, dòng 20 lên bảng với demand_mult = Q",
+  fee20.priceWarning === undefined
+    && fee20.next.op_prices.some((r) => r.op_type === 20n && r.base_price === 1_000_000n && r.demand_mult === Q),
+  String(fee20.priceWarning));
+for (const bad of ["20:1000001", "20:999999"]) {
+  const r = resolvePricePush(param(beacon), parseOpPriceSet(bad), 4146n);
+  check(`mã 20 '${bad}' → bỏ bảng mới, cảnh báo PRICE-018, không có dòng 20 trong datum gửi đi`,
+    /PRICE-018/.test(r.priceWarning ?? "") && !r.next.op_prices.some((x) => x.op_type === 20n) && r.next.epoch === 4146n,
+    String(r.priceWarning));
+}
+// Đối chứng: mã 21 (dòng thường, kề 20) đặt 1000001 thì vẫn lên bảng.
+const fee21 = resolvePricePush(param(beacon), parseOpPriceSet("21:1000001"), 4146n);
+check("mã 21 '21:1000001' → hợp lệ, lên bảng", fee21.priceWarning === undefined
+  && fee21.next.op_prices.some((r) => r.op_type === 21n && r.base_price === 1_000_001n), String(fee21.priceWarning));
+
 // resolvePricePush: bảng đặt SAI ⟹ VẪN đẩy epoch, chỉ lùi bảng giá về bảng đang trên chuỗi.
 // Vá lượt bỏ nguyên epoch khi KEEPER_OP_PRICES_SET gõ sai một lần — max_price_stale = 1 thì bỏ
 // một lượt là mọi Consume chết sau ~2 epoch (xem chú thích `resolvePricePush`).

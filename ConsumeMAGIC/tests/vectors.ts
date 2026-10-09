@@ -453,3 +453,29 @@ export const TV_PAIRS_002 = {
   sum_then_floor: 25_900_023n,
   count_delta:    5n,
 } as const;
+
+// ══════════════════════════════════════════════════════════════
+// Đơn vị phí `platform_fee_unit` — mã 20 (TV-PLATFORM-FEE-ROW), THÊM 2026-10-09
+// Nguồn on-chain: ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak ▸
+//   `base_price_pinned_if_unit` + `demand_mult_pinned_if_fixed` (bộ bài `platform_fee_*`,
+//   cùng số với từng ca dưới — Aiken không đọc tệp này, hai bên sửa cùng lúc).
+// Định nghĩa đơn vị: dòng mã 20 có base_price == 1_000_000 VÀ demand_mult == Q.
+// Mỗi ca là một bảng hai dòng; ca âm khác ca 0 ĐÚNG MỘT trường. `rule` là mã lỗi off-chain
+// (`assertValidPriceParam`) mà ca âm phải chạm.
+// ══════════════════════════════════════════════════════════════
+export const TV_PLATFORM_FEE_ROW = {
+  id:       "TV-PLATFORM-FEE-ROW",
+  spec_ref: "ConsumeMAGIC pricing.ak ▸ base_price_pinned_if_unit / fixed_price_op_types",
+  cases: [
+    { name: "đúng đơn vị",           rows: [[20n, 1_000_000n, 1_000_000_000n], [21n, 10_000_000n, 1_000_000_000n]], valid: true },
+    { name: "base 10⁶ + 1",          rows: [[20n, 1_000_001n, 1_000_000_000n], [21n, 10_000_000n, 1_000_000_000n]], valid: false, rule: "PRICE-018" },
+    { name: "base 10⁶ − 1",          rows: [[20n,   999_999n, 1_000_000_000n], [21n, 10_000_000n, 1_000_000_000n]], valid: false, rule: "PRICE-018" },
+    { name: "hệ số 1,5×",            rows: [[20n, 1_000_000n, 1_500_000_000n], [21n, 10_000_000n, 1_000_000_000n]], valid: false, rule: "PRICE-017" },
+    { name: "hệ số 0,5×",            rows: [[20n, 1_000_000n,   500_000_000n], [21n, 10_000_000n, 1_000_000_000n]], valid: false, rule: "PRICE-017" },
+    { name: "mã 21 vẫn co giãn",     rows: [[20n, 1_000_000n, 1_000_000_000n], [21n,  1_000_001n, 2_000_000_000n]], valid: true },
+  ],
+  required: [
+    { op_count: 1n,     nanogic: 1_000_000n },
+    { op_count: 2_500n, nanogic: 2_500_000_000n },
+  ],
+} as const;

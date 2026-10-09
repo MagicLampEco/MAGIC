@@ -204,6 +204,35 @@ test price_nft_datum_line_out_of_band_fail() fail {
   )
 }
 
+// ── ĐƠN VỊ PHÍ mã 20 (`platform_fee_unit`, 2026-10-09) ở beacon ĐẦU TIÊN ────────
+//    Cặp dương/âm khác nhau ĐÚNG một số (base 10⁶ ↔ 10⁶ − 1). Lối vào genesis là lối
+//    duy nhất không qua `price_param.spend`, nên nó cần cặp riêng.
+fn pn_pp_fee(fee_base: Int) -> PriceParam {
+  PriceParam {
+    ..pn_pp_ok(),
+    op_prices: [
+      OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: 1_000_000_000 },
+      OpPrice { op_type: 20, base_price: fee_base, demand_mult: 1_000_000_000 },
+    ],
+  }
+}
+
+test price_nft_platform_fee_row_at_unit_happy() {
+  pn_run(
+    [pn_genesis_input()],
+    assets.from_asset(pn_policy, price_nft_name, 1),
+    [pn_beacon_out(pn_pp_fee(1_000_000))],
+  )
+}
+
+test price_nft_platform_fee_row_base_off_by_one_fail() fail {
+  pn_run(
+    [pn_genesis_input()],
+    assets.from_asset(pn_policy, price_nft_name, 1),
+    [pn_beacon_out(pn_pp_fee(999_999))],
+  )
+}
+
 // ── ÂM: datum KHÔNG decode được thành PriceParam ──────────────────────────────
 //    Fail-closed. Beacon với datum rác vẫn mang NFT thật, nên mọi bên đọc theo NFT
 //    sẽ tin nó — và `read_price_param` phía consume chết ở `expect pp: PriceParam`,

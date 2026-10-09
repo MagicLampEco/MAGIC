@@ -75,7 +75,7 @@ import {
 } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
-import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
+import { assertValidPriceParam, PLATFORM_FEE_OP_TYPE, PLATFORM_FEE_BASE_PRICE } from "@magiclamp/consumemagic-pricing";
 import {
   consumeKey, parseVaultKind, requireConsumeVaultHash, vaultRefKey, type ConsumeKeyName,
 } from "../consumeBook.js";
@@ -235,15 +235,15 @@ async function main() {
   const priceParam: PriceParamT = {
     op_prices: [
       // Bảng phải TĂNG NGẶT theo op_type (pricing.ak: sorted_strict_op_types) và
-      // mỗi dòng phải thoả base_price × m_min ≥ Q (pricing.ak:127-135) ⟹ base_price ≥ 2.
-      // Trần 16 dòng (pricing.ak:53) — đang dùng 4.
+      // mỗi dòng phải thoả base_price × m_min ≥ Q (pricing.ak ▸ valid_param) ⟹ base_price ≥ 2.
+      // Trần dòng: pricing.ak ▸ max_op_prices (số dòng đang dùng: đếm bảng dưới đây).
       // Nghĩa của từng `op_type` tra ở sổ gốc: MagicLampEco/Registry ▸
       // Specs/Resource-Dictionary.md §2, neo main@8a23f72 (2026-09-24).
       // Bốn dòng dưới đây là bảng giá THẬT đang
       // deploy, và CHÍNH TỆP NÀY là nguồn của nó — CONTRACT.md §A chỉ chép lại để
       // đọc nhanh, lệch thì tệp này thắng.
       // demand_mult nằm trên TỪNG dòng (CC-LOAD-COUNT-UNIT), khởi tạo = Q (1,0×) cho mọi dòng.
-      // Mã trong dải giá cố định (pricing.ak ▸ fixed_price_op_types, hiện [7]) BẮT BUỘC = Q.
+      // Mã trong dải giá cố định (pricing.ak ▸ fixed_price_op_types) BẮT BUỘC = Q.
       { op_type: 1n, base_price:    10_000_000n, demand_mult: Q }, // ảnh          0.01 MAGIC
       { op_type: 2n, base_price:     1_000_000n, demand_mult: Q }, // neo CID      0.001 MAGIC
       // ĐƠN VỊ LÀ LẦN, KHÔNG PHẢI MB. `required_for` nhân `op_count` như bội số thuần
@@ -254,6 +254,10 @@ async function main() {
       // 7 · 8: chủ dự án gật 2026-09-25, giá TẠM cho giai đoạn test (M₀ = 2 MAGIC).
       { op_type: 7n, base_price:  2_000_000_000n, demand_mult: Q }, // did.rotate    2 MAGIC, giá cố định
       { op_type: 8n, base_price: 10_000_000_000n, demand_mult: Q }, // did.transfer 10 MAGIC
+      // 20: platform_fee_unit — KHÔNG phải một mức giá mà là định nghĩa đơn vị (0,001 MAGIC);
+      // validator ép base == PLATFORM_FEE_BASE_PRICE và demand == Q (pricing.ak ▸
+      // base_price_pinned_if_unit, fixed_price_op_types).
+      { op_type: PLATFORM_FEE_OP_TYPE, base_price: PLATFORM_FEE_BASE_PRICE, demand_mult: Q },
     ],
     m_min: 500_000_000n,      // 0.5×
     m_max: 2_000_000_000n,    // 2.0×

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "VaultTxAPI module contract",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Machine-readable contract for the VaultTxAPI routes a backend module calls to consume MAGIC, and for the sponsor-journey routes (open-vault, bind-did, open-fund, fund-vault, draw-magic, first-consume, claim) that the app, the sponsor side and the module call. Compatibility rules: compatibility.md. Error codes: error-codes.json. Response vectors: vectors/. Only the keywords the in-repo checker supports are used (tests/support/schemaSubset.ts): $ref, type, required, properties, additionalProperties, enum, const, pattern, items, oneOf."
   },
   "servers": [{ "url": "/", "description": "The service may sit behind a base path (GET /health reports base_path)." }],
@@ -240,7 +240,7 @@
             "properties": {
               "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "description": "Machine code. Open set: new codes may appear without a major bump." },
               "message": { "type": "string", "description": "Human-readable. May be shown to a user; never parse it." },
-              "details": { "type": "object", "description": "Code-specific structured facts. Open: keys may be added." }
+              "details": { "type": "object", "description": "Code-specific structured facts. Open: keys may be added. When the message starts with a protocol rule code (for example GEN-INST-001: ...), details.rule carries exactly that code and message is unchanged." }
             }
           }
         }
@@ -266,7 +266,20 @@
             "type": "array",
             "items": {
               "type": "object", "required": ["vault_type", "address", "script_hash"],
-              "properties": { "vault_type": { "type": "string" }, "address": { "$ref": "#/components/schemas/Address" }, "script_hash": { "$ref": "#/components/schemas/Hex56" } }
+              "properties": {
+                "vault_type": { "type": "string" }, "address": { "$ref": "#/components/schemas/Address" }, "script_hash": { "$ref": "#/components/schemas/Hex56" },
+                "schedule_params": {
+                  "type": "object",
+                  "required": ["min_length", "max_length", "delay_epochs", "min_lamp_per_fire"],
+                  "description": "Only on the Schedule scope. Generated from the ScheduleGen constants (ScheduleGen/onchain constants.ak, mirrored in constants.ts), never typed by hand: a wallet reads the limits of a schedule here instead of hard-coding them.",
+                  "properties": {
+                    "min_length": { "type": "integer", "description": "Fewest fires a schedule may have (schedule_length lower bound), in fires; one fire per epoch." },
+                    "max_length": { "type": "integer", "description": "Most fires a schedule may have (schedule_length upper bound), in fires." },
+                    "delay_epochs": { "type": "integer", "description": "Epochs between the commit and the first fire." },
+                    "min_lamp_per_fire": { "$ref": "#/components/schemas/Digits", "description": "Smallest lamp_per_epoch, in OILDROP (1 LAMP = 1000000 oildrop). Digits string like every amount of the contract." }
+                  }
+                }
+              }
             }
           },
           "holds_signing_material": { "const": false },

@@ -171,7 +171,22 @@ qua biến môi trường (`src/buildInfo.ts`). Không đo được thì `commit
 phát trước khi mở luồng Sinh MAGIC. `deployment_source` (nhãn chữ) giữ nguyên văn như cũ.
 
 Nhiều khối: `vault_scopes` là HỢP địa chỉ két của mọi khối, khối chính trước — app mở lối
-ScheduleGen khi thấy mục `vault_type: "Schedule"` ở đây. `deployment_source` vẫn là nhãn của
+ScheduleGen khi thấy mục `vault_type: "Schedule"` ở đây. Mục `Schedule` (và chỉ mục đó) mang thêm
+`schedule_params`, để app khỏi gõ cứng giới hạn lịch:
+
+```jsonc
+"schedule_params": {
+  "min_length": 10,                 // số lệnh bắn tối thiểu của một lịch (schedule_length), mỗi lệnh một kỳ
+  "max_length": 200,                // tối đa
+  "delay_epochs": 2,                // kỳ từ lúc ký tới lệnh bắn đầu
+  "min_lamp_per_fire": "1000000"    // lamp_per_epoch tối thiểu, theo OILDROP (1 LAMP = 1000000), chuỗi chữ số
+}
+```
+
+Các số này SINH từ hằng của ScheduleGen (`src/scheduleParams.ts`; nguồn `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak`
+▸ `schedule_min_length`, `schedule_max_length`, `schedule_delay`, `min_lamp_per_fire`, bản chép off-chain
+`ScheduleGen/offchain/src/constants.ts`); `tests/scheduleParams.test.ts` đọc thẳng tệp `.ak` để so. Ví dụ số trong khối trên
+là giá trị lúc viết (2026-10-09), không phải nguồn. `deployment_source` vẫn là nhãn của
 khối CHÍNH (app cũ dò mẫu trong chuỗi này); nhãn của mọi khối ở trường mới
 `deployment_sources` (mảng, khối chính trước; một khối ⟹ mảng một phần tử). `lamp` không đổi:
 mọi khối buộc cùng tài sản LAMP lúc khởi động.
@@ -1801,6 +1816,11 @@ Nên:
 
 ### Mã trả về
 
+Mọi lỗi mà `message` mở đầu bằng mã luật giao thức (`GEN-INST-001: …`, `GEN-SCH-GB: …`) còn mang `details.rule` =
+đúng mã đó (từ hợp đồng 1.2.0; `message` giữ nguyên), để app rẽ nhánh theo luật mà khỏi tách chuỗi. Lỗi không mở đầu
+bằng mã luật thì không có khoá này; `details.rule` do Feecover chuyển (`FEE_PROXY_REJECTED`) được giữ nguyên.
+Một chỗ chung: `src/errors.ts` ▸ `TxApiError`.
+
 | tình huống | mã |
 |---|---|
 | dựng xong | `200` |
@@ -2259,7 +2279,10 @@ có thưởng > 0 đi qua ví trả phí nhận `422 FEE_PAYER_OWNER_REWARD_NONZ
   `consume` qua `fee_payer` `64d33314…`. Hash đầy đủ tra được trên explorer Preprod theo tiền
   tố. Ba lỗi lộ ra ở lượt đó đã vá ở `370d3b49`.
   **Chưa chạy thật:** `schedule-commit`, `schedule-fire`, `burn-batch`, chủ dạng script
-  (`did_stake`), `funding` did_payment (xem trên), và mọi route qua Feecover thật. Phần
+  (`did_stake`), `funding` did_payment (xem trên), và mọi route qua Feecover thật. (Từ 2026-10-09
+  `schedule-commit`/`schedule-fire` với chủ `did_stake` + `fee_payer` đã chạy trên Lucid Emulator ở tầng bộ dựng SDK —
+  `ScheduleGen/tests/e2eEmulator.test.ts` ▸ ca "DID+fee_payer" — nhưng `SdkTxBuilder` này vẫn chưa dựng một tx nào
+  trên chuỗi thật cho hai route đó.) Phần
   không-chuỗi (bộ định tuyến, khoá mềm, cổng cấu hình, đường `summary`) đo bằng CBOR thật dựng
   tại chỗ bằng CML.
 - **Khoá mềm chỉ đúng với một tiến trình.** Hai bản sau bộ cân tải thì cần một chỗ giữ

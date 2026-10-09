@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "operation": "POST /tx/sponsor/draw-magic",
   "requests": {
     "valid": [

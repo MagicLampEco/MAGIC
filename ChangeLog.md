@@ -5,6 +5,22 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-09 — VaultTxAPI 2.0.0: `/health` khai đúng khoá ký tiến trình giữ
+
+**Đổi gì.** `GET /health` thêm `signing_keys: [{ role: "platform", pkh }]` (role + băm khoá, không bao giờ giá trị khoá) và
+`holds_signing_material` thành boolean `= signing_keys không rỗng` (`VaultTxAPI/src/http.ts` ▸ `RouterDeps.heldKeys`; `src/server.ts` ▸
+`platformPkh`, cùng nguồn với dòng nhật ký khởi động). Hợp đồng `contract/` lên `2.0.0` (`info.version`, `error-codes.json`, mọi vector);
+`vectors/health.json` thêm mẫu tiến trình giữ khoá platform và các mẫu bị bác (`signing-key-role-unknown`, `signing-key-pkh-not-hex56`,
+`missing-signing-keys`).
+**Vì sao.** Từ 2026-10-07 tiến trình nạp `VAULT_TX_API_PLATFORM_KEY` (Prepaid) giữ một khoá platform, mà `/health` vẫn khai hằng
+`holds_signing_material: false` — sai ở đúng chỗ bên vận hành và bên tích hợp dò xem tiến trình có giữ khoá không. Major vì
+`compatibility.md` §4: đổi kiểu một khoá có sẵn (`const false` → boolean) và người đọc rẽ nhánh theo `false` cũ có thể hiểu sai.
+**Cái gì gãy.** Người đọc nào coi `holds_signing_material === false` là bất biến sẽ thấy `true` trên tiến trình Prepaid giữ khoá platform;
+phải chuyển sang đọc `signing_keys`. Ràng buộc "true ⇔ signing_keys không rỗng" CỐ Ý không đặt trong lược đồ: diễn đạt nó cần một
+`const` không vô hướng (`[]`), mà bộ kiểm so `const` bằng `===` (ví dụ bộ kiểm hợp đồng của AladinWork Core) sẽ bác mọi `/health`
+bình thường. Hai chiều do `tests/service.test.ts` và `tests/moduleContract.test.ts` kiểm lúc chạy. Phần tử `signing_keys` vẫn MỞ như mọi lời đáp (`contract/compatibility.md` §1);
+chốt "chỉ `role` + `pkh`, không bao giờ giá trị khoá" do `tests/service.test.ts` giữ trên lời đáp thật.
+
 ## 2026-10-09 — ConsumeMAGIC: mã 20 `platform_fee_unit` — dòng giá là định nghĩa đơn vị (base 10⁶ + hệ số Q), ép ở mọi lối vào
 
 **Đổi gì.** (1) `pricing.ak`: hằng `platform_fee_op_type = 20`, `platform_fee_base_price = 1_000_000`; mã 20 vào

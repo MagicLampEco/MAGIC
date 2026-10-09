@@ -318,6 +318,16 @@ describe("router thật khớp hợp đồng", () => {
     }
   });
 
+  it("`/health` của tiến trình GIỮ khoá platform khớp lược đồ (nhánh `true` trên lời đáp THẬT)", async () => {
+    const h = consumeHarness();
+    const pkh = "75".repeat(28);
+    const r = await handle({ method: "GET", url: "/health", headers: {} }, { ...h.router, heldKeys: [{ role: "platform", pkh }] });
+    expect(r.status).toBe(200);
+    expect(r.body.holds_signing_material).toBe(true);
+    expect(r.body.signing_keys).toEqual([{ role: "platform", pkh }]);
+    expectMatchesContract("GET /health", r.status, r.body);
+  });
+
   it("`/fee/utxo`: reservation_id có thật, đúng dạng; lời đáp MỞ (khoá lạ vẫn khớp) còn yêu cầu ĐÓNG ở fee_payer", async () => {
     const h = consumeHarness();
     const utxo = await h.call("POST", "/fee/utxo", { route: "consume" });

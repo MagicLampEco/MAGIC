@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "VaultTxAPI module contract",
-    "version": "1.2.0",
+    "version": "2.0.0",
     "description": "Machine-readable contract for the VaultTxAPI routes a backend module calls to consume MAGIC, and for the sponsor-journey routes (open-vault, bind-did, open-fund, fund-vault, draw-magic, first-consume, claim) that the app, the sponsor side and the module call. Compatibility rules: compatibility.md. Error codes: error-codes.json. Response vectors: vectors/. Only the keywords the in-repo checker supports are used (tests/support/schemaSubset.ts): $ref, type, required, properties, additionalProperties, enum, const, pattern, items, oneOf."
   },
   "servers": [{ "url": "/", "description": "The service may sit behind a base path (GET /health reports base_path)." }],
@@ -249,7 +249,7 @@
         "type": "object",
         "required": [
           "ok", "network", "chain", "deployment_source", "deployment_sources", "lamp", "change_address_strategy",
-          "vault_scopes", "holds_signing_material", "feecover", "commit", "commit_dirty", "commit_source", "base_path", "epoch"
+          "vault_scopes", "holds_signing_material", "signing_keys", "feecover", "commit", "commit_dirty", "commit_source", "base_path", "epoch"
         ],
         "properties": {
           "ok": { "const": true },
@@ -282,7 +282,18 @@
               }
             }
           },
-          "holds_signing_material": { "const": false },
+          "holds_signing_material": { "type": "boolean", "description": "Whether THIS process holds any signing key. A user key is never held, in any deployment. The platform key of the sponsor fund genesis is held by a process that was started with VAULT_TX_API_PLATFORM_KEY (a Prepaid deployment); then this is true and signing_keys lists it. Invariant: true if and only if signing_keys is not empty. Checked by tests (service.test.ts, moduleContract.test.ts), deliberately not stated in this schema: it needs a non-scalar const, which validators comparing const by identity apply wrongly." },
+          "signing_keys": {
+            "type": "array",
+            "description": "The signing keys this process holds: role and key hash only, never the key value. Empty exactly when holds_signing_material is false. Roles: platform (signs the sponsor fund genesis and FundClaim; every other transaction is returned unsigned).",
+            "items": {
+              "type": "object", "required": ["role", "pkh"],
+              "properties": {
+                "role": { "type": "string", "enum": ["platform"] },
+                "pkh": { "$ref": "#/components/schemas/Hex56" }
+              }
+            }
+          },
           "feecover": { "type": "string", "enum": ["absent", "configured"] },
           "commit": { "type": ["string", "null"] },
           "commit_dirty": { "type": ["boolean", "null"] },

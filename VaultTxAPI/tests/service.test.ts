@@ -504,8 +504,27 @@ describe("Bộ định tuyến", () => {
     const r = await handle({ method: "GET", url: "/health", headers: {} }, h.router);
     expect(r.status).toBe(200);
     expect(r.body.holds_signing_material).toBe(false);
+    expect(r.body.signing_keys).toEqual([]);
     expect(r.body.deployment_source).toBe(DEPLOYMENT.source);
     expect(r.body.change_address_strategy).toBe("enterprise_from_owner_pkh");
+  });
+
+  it("/health khai khoá ký tiến trình GIỮ: có heldKeys ⟹ true + đúng role/pkh. CẶP: không có ⟹ false + []", async () => {
+    const h = harness({ token: "x".repeat(32) });
+    const pkh = "ab".repeat(28);
+    const held = await handle({ method: "GET", url: "/health", headers: {} },
+      { ...h.router, heldKeys: [{ role: "platform", pkh }] });
+    expect(held.status).toBe(200);
+    expect(held.body.holds_signing_material).toBe(true);
+    expect(held.body.signing_keys).toEqual([{ role: "platform", pkh }]);
+    // Chỉ role + pkh: không khoá nào khác lọt vào thân bài.
+    expect(Object.keys((held.body.signing_keys as object[])[0]!).sort()).toEqual(["pkh", "role"]);
+    const none = await handle({ method: "GET", url: "/health", headers: {} }, { ...h.router, heldKeys: [] });
+    expect(none.body.holds_signing_material).toBe(false);
+    expect(none.body.signing_keys).toEqual([]);
+    const absent = await handle({ method: "GET", url: "/health", headers: {} }, h.router);
+    expect(absent.body.holds_signing_material).toBe(false);
+    expect(absent.body.signing_keys).toEqual([]);
   });
 
   it("dịch vụ không thẻ: yêu cầu đã qua proxy ⟹ 401, mọi header chuyển tiếp. CẶP: yêu cầu trên máy ⟹ qua cổng thẻ", async () => {

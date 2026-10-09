@@ -132,6 +132,10 @@ const platformSign = cfg.platformKey === undefined || cfg.deployment.prepaid ===
         ? {} : { beneficiary: cfg.deployment.prepaid.sponsor.beneficiary }),
     });
 delete cfg.platformKey;
+// Key hash of the platform key this process holds — ONE source for the startup log line and `/health`
+// ▸ `signing_keys`. `createPlatformSigner` refuses to start without `platform_pkhs[0]`, so it is defined
+// exactly when `platformSign` is.
+const platformPkh = platformSign === undefined ? undefined : cfg.deployment.prepaid?.sponsor?.platformPkhs?.[0];
 // Địa chỉ enterprise của khoá platform giữ UTxO ⟹ CẢNH BÁO, không từ chối khởi động: ai cũng gửi được một UTxO
 // tới địa chỉ bất kỳ, nên từ chối khởi động là trao cho người ngoài một nút tắt dịch vụ. Chặn thật nằm ở hai chỗ
 // không phụ thuộc số dư: 422 SPONSOR_FEE_WALLET_IS_PLATFORM ở mọi route và hàm ký từ chối input của khoá đó.
@@ -201,6 +205,8 @@ const server = createServer((rq, rs) => {
           sponsorToken: cfg.sponsorToken,
           build,
           basePath: cfg.basePath,
+          // Khoá ký mà tiến trình này GIỮ (role + pkh, không bao giờ giá trị khoá) — `/health` khai đúng điều này.
+          ...(platformPkh === undefined ? {} : { heldKeys: [{ role: "platform" as const, pkh: platformPkh }] }),
           ...(feeProxy === undefined ? {} : { feeProxy }),
           ...(sponsor === undefined ? {} : { sponsor }),
           logInternal,
@@ -235,7 +241,7 @@ server.listen(cfg.port, cfg.host, () => {
     `thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
     `khoá mềm ${cfg.lockTtlMs}ms · tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
   );
-  console.error(serviceKeyStatusLine(platformSign === undefined ? undefined : cfg.deployment.prepaid?.sponsor?.platformPkhs?.[0]));
+  console.error(serviceKeyStatusLine(platformPkh));
   if (cfg.token === "" && isLoopback(cfg.host)) {
     console.error(
       "[vault-tx-api] ⚠ không có thẻ bài. Chỉ an toàn chừng nào cổng này còn ở loopback. " +

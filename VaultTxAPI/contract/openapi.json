@@ -247,10 +247,6 @@
       },
       "HealthResponse": {
         "type": "object",
-        "oneOf": [
-          { "properties": { "holds_signing_material": { "const": false }, "signing_keys": { "const": [] } } },
-          { "properties": { "holds_signing_material": { "const": true } } }
-        ],
         "required": [
           "ok", "network", "chain", "deployment_source", "deployment_sources", "lamp", "change_address_strategy",
           "vault_scopes", "holds_signing_material", "signing_keys", "feecover", "commit", "commit_dirty", "commit_source", "base_path", "epoch"
@@ -286,7 +282,7 @@
               }
             }
           },
-          "holds_signing_material": { "type": "boolean", "description": "Whether THIS process holds any signing key. A user key is never held, in any deployment. The platform key of the sponsor fund genesis is held by a process that was started with VAULT_TX_API_PLATFORM_KEY (a Prepaid deployment); then this is true and signing_keys lists it. Runtime invariant, checked by tests (not expressible in this schema subset): true if and only if signing_keys is not empty." },
+          "holds_signing_material": { "type": "boolean", "description": "Whether THIS process holds any signing key. A user key is never held, in any deployment. The platform key of the sponsor fund genesis is held by a process that was started with VAULT_TX_API_PLATFORM_KEY (a Prepaid deployment); then this is true and signing_keys lists it. Invariant: true if and only if signing_keys is not empty. Checked by tests (service.test.ts, moduleContract.test.ts), deliberately not stated in this schema: it needs a non-scalar const, which validators comparing const by identity apply wrongly." },
           "signing_keys": {
             "type": "array",
             "description": "The signing keys this process holds: role and key hash only, never the key value. Empty exactly when holds_signing_material is false. Roles: platform (signs the sponsor fund genesis and FundClaim; every other transaction is returned unsigned).",

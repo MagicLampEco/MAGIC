@@ -238,8 +238,9 @@
         "why": "role is one of the closed set [\"platform\"]; a user key is never held, so no \"user\" role exists."
       },
       {
-        "name": "holds-false-with-signing-keys",
+        "name": "signing-key-pkh-not-hex56",
         "status": 200,
+        "why": "pkh is 56 lowercase hex (a key hash).",
         "body": {
           "ok": true,
           "network": "Preview",
@@ -266,7 +267,7 @@
               }
             }
           ],
-          "holds_signing_material": false,
+          "holds_signing_material": true,
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,
@@ -277,11 +278,10 @@
           "signing_keys": [
             {
               "role": "platform",
-              "pkh": "abababababababababababababababababababababababababababab"
+              "pkh": "ababababababababababababababababababababababababababab"
             }
           ]
-        },
-        "why": "holds_signing_material false while signing_keys lists a key: the two fields disagree (the schema half of the invariant)."
+        }
       },
       {
         "name": "missing-holds-signing-material",
@@ -313,6 +313,7 @@
               }
             }
           ],
+          "signing_keys": [],
           "feecover": "configured",
           "commit": null,
           "commit_dirty": null,

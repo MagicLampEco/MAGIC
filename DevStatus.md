@@ -403,6 +403,16 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 
 ---
 
+## Nhánh đã đẩy, không có PR
+
+- đã push chưa PR (nhánh `deploy/wk5-keeper-pure-ada-collateral`, đầu `fba32ae2`) — 2026-10-08.
+  Nhánh triển khai, KHÔNG để gộp. Nó là `85247003` (mã keeper đang chạy cho cụm Preprod wk5) cộng
+  bản vá thế chấp chỉ-ADA của PR #170 chép lại (`cherry-pick`). `main` đã có bản vá đó qua #170;
+  nhánh này chỉ tồn tại vì `main` đã trôi xa khỏi bản dựng mà keeper wk5 ghim. Bỏ nhánh khi keeper
+  chuyển sang cụm đời mới.
+
+---
+
 ## Còn nợ — biết rõ, chưa làm
 
 > ⚠ **Thư mục đặc tả đổi tên `SPEC/` → `Specs/` ngày 2026-09-20** (chuẩn `RepoStructure`). Mọi

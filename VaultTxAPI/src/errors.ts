@@ -136,6 +136,12 @@
 
 import { randomBytes } from "node:crypto";
 
+/** Mã luật ở ĐẦU thông điệp: `GEN-INST-001: …`, `GEN-SCH-GB: …` (chữ hoa/số, tối thiểu hai đoạn nối gạch, rồi `:` và khoảng trắng). */
+const RULE_PREFIX = /^([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+):\s/;
+export function ruleOfMessage(message: string): string | undefined {
+  return RULE_PREFIX.exec(message)?.[1];
+}
+
 export class TxApiError extends Error {
   readonly httpStatus: number;
   readonly code: string;
@@ -146,7 +152,11 @@ export class TxApiError extends Error {
     this.name = code;
     this.httpStatus = httpStatus;
     this.code = code;
-    this.details = details;
+    // MỘT chỗ chung cho mọi lỗi của dịch vụ: lỗi mang mã luật ở tiền tố `message` (`GEN-INST-001: …`) thì
+    // `details.rule` mang đúng mã đó, để app khỏi tách chuỗi. `message` giữ NGUYÊN. Đã có `details.rule`
+    // (vd Feecover chuyển `rule` của nó) thì giữ cái có sẵn.
+    const rule = ruleOfMessage(message);
+    this.details = rule === undefined || details.rule !== undefined ? details : { ...details, rule };
   }
 
   toBody(): { error: { code: string; message: string; details: Record<string, unknown> } } {

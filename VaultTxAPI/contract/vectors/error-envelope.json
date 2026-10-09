@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "schema": "ErrorResponse",
   "description": "Every non-2xx answer of every route.",
   "responses": {
@@ -12,6 +12,21 @@
             "code": "UNAUTHORIZED",
             "message": "Missing or wrong token.",
             "details": {}
+          }
+        }
+      },
+      {
+        "name": "details-rule-from-message-prefix",
+        "status": 422,
+        "note": "The message starts with a protocol rule code; details.rule carries exactly that code, message is unchanged.",
+        "body": {
+          "error": {
+            "code": "TX_BUILD_REJECTED",
+            "message": "GEN-INST-001: the requested amount is above the cap.",
+            "details": {
+              "thrown_by": "Error",
+              "rule": "GEN-INST-001"
+            }
           }
         }
       },

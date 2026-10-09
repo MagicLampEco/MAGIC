@@ -5,6 +5,23 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-09 — VaultTxAPI 1.2.0: `schedule_params` trong `/health`, `details.rule`, chủ DID + `fee_payer` trên ScheduleGen
+
+**Đổi gì.** (1) `GET /health ▸ vault_scopes[]` — mục `Schedule` mang `schedule_params { min_length, max_length,
+delay_epochs, min_lamp_per_fire }` (số nguyên; `min_lamp_per_fire` là chuỗi chữ số theo oildrop), sinh từ hằng ScheduleGen
+(`VaultTxAPI/src/scheduleParams.ts`), không gõ tay. (2) Mọi lỗi của dịch vụ có mã luật ở tiền tố `message`
+(`GEN-INST-001: …`) nay mang `details.rule` = mã đó; `message` giữ nguyên (`VaultTxAPI/src/errors.ts` ▸ `TxApiError`, một chỗ
+chung). (3) `/tx/schedule-commit` và `/tx/schedule-fire` nhận `fee_payer` cho chủ DID (`owner` = Script(did_stake)) — mã đã
+chạy sẵn (chung `buildOne` với instant-gen), nay có bài kiểm: Emulator ở tầng bộ dựng + validator thật
+(`ScheduleGen/tests/e2eEmulator.test.ts`, ca "DID+fee_payer") và tầng dịch vụ (`VaultTxAPI/tests/feePayerNewcomer.test.ts`);
+chú thích đầu `http.ts` ghi `[change_address | fee_payer]` cho hai route. Hợp đồng `contract/` lên `1.2.0` (`info.version`,
+`error-codes.json`, mọi vector); thêm vector `/health` có `schedule_params` và một mẫu bị bác.
+**Vì sao.** App ví SuperApp (thư sa1008mg-b) đang gõ cứng độ dài lịch 10…200, độ trễ 2 kỳ và 1 LAMP mỗi lệnh, và phải tách chuỗi
+`message` để lấy mã luật. Giá trị app gõ trùng hằng thật (10, 200, 2, 1_000_000 oildrop) — không lệch.
+**Cái gì gãy.** Không gì: chỉ thêm khoá vào lời đáp (lời đáp mở, `compatibility.md` §1) nên là bản MINOR. Hai route
+`schedule-commit`/`schedule-fire` CHƯA nằm trong `openapi.json` (hợp đồng mười lăm route, không có hai route này); thêm chúng là
+việc riêng.
+
 ## 2026-10-08 — Két và quỹ: mọi output ở script két/quỹ phải là một dòng sổ (InstantGen, ScheduleGen, PrepaidGen)
 
 **Đổi gì.** (1) `PrepaidGen` ▸ `find_vault_output_raw` và phép đếm input ở `prepaid_vault.spend` đếm theo payment

@@ -109,21 +109,25 @@ const rewardInChange = (r?: RewardLeg): bigint => r !== undefined && r.into === 
 const ownerLeg = (on: boolean): TxOutputSpec[] => on ? [{ address: OWNER_WALLET, assets: { lovelace: OWNER_UTXO.assets.lovelace! } }] : [];
 
 /** schedule-commit qua ví trả phí; `raise` lovelace từ ví trả phí vào KÉT, `stray` vào một địa chỉ lạ. */
-function commitTx(o: { raise?: bigint; stray?: bigint } = {}): string {
+function commitTx(o: { raise?: bigint; stray?: bigint; owner?: OwnerRef; ownerInput?: boolean } = {}): string {
   const fee = 178_000n;
   const raise = o.raise ?? 0n;
   const stray = o.stray ?? 0n;
   return buildTxCbor({
-    ...feeLegs([ref(VAULT_UTXO), ref(FEE_UTXO)]),
+    ...feeLegs([ref(VAULT_UTXO), ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
     feeLovelace: fee,
     outputs: [
       {
         address: VAULT_ADDRESS,
         assets: { lovelace: VAULT_LOVELACE + raise, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-        inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1, batches: [FEE_BATCH] }),
+        inlineDatumHex: datumHex({
+          ...(o.owner === undefined ? {} : { owner: o.owner }),
+          lampLockedOildrop: 23_000_000n, genScheduleCount: 1, batches: [FEE_BATCH],
+        }),
       },
       { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - raise - stray } },
       ...(stray > 0n ? [{ address: STRANGER, assets: { lovelace: stray } }] : []),
+      ...ownerLeg(o.ownerInput === true),
     ],
     requiredSigners: [OWNER_PKH],
   });
@@ -640,4 +644,80 @@ describe("thưởng did_stake về ví Phoenix qua route (vector DID #1)", () =>
       expect(paysOf(zero.builder)).toEqual([]);
     });
   }
+});
+
+// ── schedule-commit / schedule-fire: chủ DID (owner = Script(did_stake)) + fee_payer ─────────────────
+// Yêu cầu của app ví (thư sa1008mg-b): chủ DID đi ví trả phí trên ScheduleGen như trên InstantGen. Dịch vụ dùng
+// CHUNG `buildOne` cho mọi route (`feePayerFor`, đọc lại CBOR theo luật ví trả phí), nên ở đây ghim bốn thứ:
+// bộ dựng nhận ĐÚNG UTxO trả phí + thế chấp 3 ADA + nhân chứng chủ kiểu `script`; chủ KHÔNG ở required-signer của
+// ví trả phí; cực đối: input từ ví khoá của chủ ⟹ 422 FEE_PAYER_TX_MISMATCH; và vắng `fee_payer` ⟹ cặp đối.
+// Phần validator + chữ ký thật: `ScheduleGen/tests/e2eEmulator.test.ts` ▸ ca "DID+fee_payer".
+describe("schedule-commit / schedule-fire — chủ DID + fee_payer", () => {
+  const DID_VAULT = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
+    { lovelace: VAULT_LOVELACE, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+    datumHex({ owner: SCRIPT_OWNER, lampLockedOildrop: 2_000_000n, batches: [FEE_BATCH] }));
+  const didCommit = (over: Record<string, unknown> = {}) => post("/tx/schedule-commit", {
+    owner: SCRIPT_OWNER, owner_witness: WITNESS_BODY, schedule_length: "3", lamp_per_epoch: "7000000",
+    fee_payer: FEE_PAYER, ...over,
+  });
+  const didFire = (over: Record<string, unknown> = {}) => post("/tx/schedule-fire", {
+    owner: SCRIPT_OWNER, owner_witness: WITNESS_BODY, schedule_id: "5c4ed0", fee_payer: FEE_PAYER, ...over,
+  });
+
+  it("commit DƯƠNG: 200; bộ dựng nhận UTxO trả phí + thế chấp 3 ADA + nhân chứng chủ script; không change_address", async () => {
+    const h = harness({ vaults: [DID_VAULT], witness: new RewardWitness(0n), cbor: { schedule_commit: commitTx({ owner: SCRIPT_OWNER }) } });
+    const r = await handle(didCommit(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall).toMatchObject({
+      route: "schedule_commit", ownerAuthKind: "script", collateralLovelace: 3_000_000n,
+    });
+    expect(h.builder.lastCall!.feePayerUtxo).toMatchObject({ txHash: FEE_UTXO.txHash, outputIndex: 0, address: FEE_ADDRESS });
+    expect(feePayerOf(r)).toMatchObject({ fronted_lovelace: "0" });
+  });
+
+  it("fire DƯƠNG: 200; chủ script vẫn tra được két theo chủ; bộ dựng nhận UTxO trả phí + thế chấp 3 ADA", async () => {
+    const h = harness({ vaults: [DID_VAULT], witness: new RewardWitness(0n), cbor: { schedule_fire: commitTx({ owner: SCRIPT_OWNER }) } });
+    const r = await handle(didFire(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall).toMatchObject({ route: "schedule_fire", collateralLovelace: 3_000_000n });
+    expect(h.builder.lastCall!.feePayerUtxo).toMatchObject({ txHash: FEE_UTXO.txHash });
+  });
+
+  // Cổng đọc lại KHÔNG ép tập địa chỉ input của buildOne (`otherInputAddresses` vắng, như instant-gen/consume): ví
+  // lucid của dịch vụ chỉ mang UTxO trả phí nên bộ dựng không CHỌN được input khác; thứ cổng này bắt được là ADA của ví
+  // trả phí chảy sang chỗ khác (vế 4: cân đúng phí + thối + khoản ứng).
+  it("CỰC ĐỐI commit: ADA của ví trả phí chảy tới một địa chỉ lạ ⟹ 422 FEE_PAYER_TX_MISMATCH, không vào sổ phát hành", async () => {
+    const h = harness({ vaults: [DID_VAULT], witness: new RewardWitness(0n),
+      cbor: { schedule_commit: commitTx({ owner: SCRIPT_OWNER, stray: RAISE }) } });
+    const r = await handle(didCommit(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("FEE_PAYER_TX_MISMATCH");
+    expect(h.locks.size()).toBe(0);
+  });
+
+  it("CỰC ĐỐI fire: cùng khoản chảy tới địa chỉ lạ ⟹ 422 FEE_PAYER_TX_MISMATCH", async () => {
+    const h = harness({ vaults: [DID_VAULT], witness: new RewardWitness(0n),
+      cbor: { schedule_fire: commitTx({ owner: SCRIPT_OWNER, stray: RAISE }) } });
+    const r = await handle(didFire(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("FEE_PAYER_TX_MISMATCH");
+  });
+
+  it("CỰC ĐỐI mục rút did_stake: số dư thưởng > 0 mà không suy được ví Phoenix ⟹ 422 FEE_PAYER_OWNER_REWARD_NONZERO, bộ dựng không được gọi", async () => {
+    const h = harness({ vaults: [DID_VAULT], witness: new RewardWitness(1n), cbor: { schedule_commit: commitTx({ owner: SCRIPT_OWNER }) } });
+    const r = await handle(didCommit(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("FEE_PAYER_OWNER_REWARD_NONZERO");
+    expect(h.builder.lastCall).toBeNull();
+  });
+
+  it("CẶP: chủ script thiếu cả fee_payer lẫn change_address ⟹ 400 CHANGE_ADDRESS_REQUIRED (commit và fire)", async () => {
+    const h = harness({ vaults: [DID_VAULT], witness: new RewardWitness(0n), cbor: { schedule_commit: commitTx({ owner: SCRIPT_OWNER }), schedule_fire: commitTx({ owner: SCRIPT_OWNER }) } });
+    for (const mk of [didCommit, didFire]) {
+      const r = await handle(mk({ fee_payer: undefined }), h.router);
+      expect(r.status, JSON.stringify(r.body)).toBe(400);
+      expect(codeOf(r)).toBe("CHANGE_ADDRESS_REQUIRED");
+    }
+    expect(h.builder.lastCall).toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "operation": "GET /tx/status/{tx_hash}",
   "responses": {
     "valid": [

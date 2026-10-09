@@ -239,7 +239,7 @@ async function main() {
       // Trần dòng: pricing.ak ▸ max_op_prices (số dòng đang dùng: đếm bảng dưới đây).
       // Nghĩa của từng `op_type` tra ở sổ gốc: MagicLampEco/Registry ▸
       // Specs/Resource-Dictionary.md §2, neo main@8a23f72 (2026-09-24).
-      // Bốn dòng dưới đây là bảng giá THẬT đang
+      // Các dòng dưới đây là bảng giá THẬT đang
       // deploy, và CHÍNH TỆP NÀY là nguồn của nó — CONTRACT.md §A chỉ chép lại để
       // đọc nhanh, lệch thì tệp này thắng.
       // demand_mult nằm trên TỪNG dòng (CC-LOAD-COUNT-UNIT), khởi tạo = Q (1,0×) cho mọi dòng.

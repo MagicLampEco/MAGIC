@@ -5,8 +5,10 @@
 // ── ĐÚNG TÁM ĐƯỜNG DỰNG (`buildRequest.ts` ▸ `BUILD_ROUTE_OF_PATH`), KHÔNG THÊM ──────
 //   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer], m, [wakeme_vault_ref] }
 //   POST /tx/refresh-checkpoint { owner, [owner_witness], [change_address | fee_payer], [wakeme_vault_ref] }
-//   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
-//   POST /tx/schedule-fire     { owner, …, schedule_id }
+//   POST /tx/schedule-commit   { owner, [owner_witness], [change_address | fee_payer], schedule_length, lamp_per_epoch }
+//   POST /tx/schedule-fire     { owner, [owner_witness], [change_address | fee_payer], schedule_id }
+//                              (chủ DID — owner = Script(did_stake) — kèm `fee_payer` dựng được cả hai: commit ký quyền
+//                              chủ bằng mục rút did_stake; fire không cần chủ ký — ScheduleGen::ScheduleFire permissionless)
 //   POST /tx/consume           { owner, …, op_type, op_count | pairs, [engage_ref], [wakeme_vault_ref] }
 //                              (`pairs` = [{ op_type, op_count }, …] ⟹ ConsumeMany, 1..8 cặp, op_type
 //                              tăng ngặt; loại trừ với cặp đơn ⟹ 400 `CONSUME_PAIRS_CONFLICT` — `consumeLine.ts`)
@@ -51,6 +53,7 @@ import { BUILD_ROUTE_OF_PATH, buildResultBody, parseBuildRequest, reqString, run
 import { CodedApiError } from "./errors.js";
 import type { BuildInfo } from "./buildInfo.js";
 import { stripBasePath } from "./basePath.js";
+import { scheduleParamsView } from "./scheduleParams.js";
 import type { FeeProxy } from "./feeProxy.js";
 import { sponsorRoute, type SponsorTxService } from "./sponsor.js";
 import { quoteFee } from "./feeQuote.js";
@@ -171,8 +174,11 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         // policy LAMP mà Wakeme phát trước khi mở Sinh MAGIC.
         lamp: { policy_id: deps.service.lampAsset.policyId, asset_name_hex: deps.service.lampAsset.assetNameHex },
         change_address_strategy: deps.changeAddressStrategy,
+        // Mục `Schedule` mang thêm `schedule_params` (hằng của ScheduleGen — `scheduleParams.ts`), để app khỏi gõ cứng
+        // độ dài lịch, độ trễ và LAMP tối thiểu mỗi lệnh. Khối khác không có khoá này.
         vault_scopes: deps.vaultScopes.map(s => ({
           vault_type: s.vaultType, address: s.address, script_hash: s.scriptHash,
+          ...(s.vaultType === "Schedule" ? { schedule_params: scheduleParamsView() } : {}),
         })),
         // Nói thẳng ở chỗ máy đọc được, không chỉ ở README.
         holds_signing_material: false,

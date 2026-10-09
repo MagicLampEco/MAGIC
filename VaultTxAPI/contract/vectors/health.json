@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "operation": "GET /health",
   "responses": {
     "valid": [
@@ -23,7 +23,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -57,7 +63,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -96,7 +108,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -145,7 +163,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": true,
@@ -179,7 +203,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "feecover": "configured",
@@ -212,7 +242,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -246,7 +282,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -280,7 +322,53 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "schedule-min-lamp-per-fire-as-number",
+        "status": 200,
+        "why": "schedule_params.min_lamp_per_fire is a digits string (oildrop, like every amount of the contract), never a JSON number.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": 1000000
+              }
             }
           ],
           "holds_signing_material": false,
@@ -314,7 +402,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -347,7 +441,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,
@@ -386,7 +486,13 @@
             {
               "vault_type": "Schedule",
               "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
-              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf",
+              "schedule_params": {
+                "min_length": 10,
+                "max_length": 200,
+                "delay_epochs": 2,
+                "min_lamp_per_fire": "1000000"
+              }
             }
           ],
           "holds_signing_material": false,

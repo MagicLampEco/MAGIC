@@ -78,6 +78,7 @@ done < <(find . -name aiken.toml \
            -not -path '*/build/*' \
            -not -path '*/Legacy/*' \
            -not -path './.claude/*' \
+           -not -path './_Agents/*' \
            -not -path '*/node_modules/*' | sort)
 
 # `plutus.json` KHÔNG được version-control (.gitignore) ⇒ vế 2 chỉ chứng minh được

@@ -26,6 +26,7 @@ find_projects() {
     -not -path '*/build/*' \
     -not -path '*/Legacy/*' \
     -not -path './.claude/*' \
+    -not -path './_Agents/*' \
     -not -path '*/node_modules/*' | sort
 }
 

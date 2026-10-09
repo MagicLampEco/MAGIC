@@ -39,7 +39,7 @@ function moduleDirs(): string[] {
   const out = execFileSync(
     "find",
     [".", "-name", "aiken.toml", "-not", "-path", "*/build/*", "-not", "-path", "*/Legacy/*",
-     "-not", "-path", "./.claude/*", "-not", "-path", "*/node_modules/*"],
+     "-not", "-path", "./.claude/*", "-not", "-path", "./_Agents/*", "-not", "-path", "*/node_modules/*"],
     { cwd: REPO, encoding: "utf8" },
   );
   return out.split("\n").filter(Boolean).map((p) => dirname(p)).sort();

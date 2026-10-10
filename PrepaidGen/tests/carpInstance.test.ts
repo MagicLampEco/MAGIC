@@ -1,7 +1,7 @@
 // tests/carpInstance.test.ts — soft-pin cặp CARP với instance CarpetMint.
 // KHÔNG gọi mạng: phản hồi là bản rút gọn của GET
-// https://api.magiclamp.eco/carpetmint/v1/instance/Preprod (đo 2026-10-04; cặp anchor thay bằng đời 7 ngày
-// 2026-10-10, URL sang tiền tố `gen7`; thư CARP nói hình dạng phản hồi giữ nguyên), và
+// https://api.magiclamp.eco/carpetmint/v1/instance/Preprod (đo 2026-10-04); cặp anchor thay bằng đời 7, khớp
+// GET https://preprod.magiclamp.eco/carp/v1/instance/Preprod đo 2026-10-10 (sha256 6e693cc2…), và
 // `fetchCarpInstance` nhận một `fetch` giả.
 
 import { describe, expect, it } from "vitest";
@@ -35,8 +35,9 @@ const fakeFetch = (status: number, payload: unknown) =>
   }) as unknown as typeof fetch;
 
 describe("soft-pin CARP ↔ instance CarpetMint", () => {
-  it("URL instance cùng đời với cặp CARP trong constants (đời 7 ⟹ tiền tố gen7)", () => {
-    expect(CARP_INSTANCE_URL("Preprod")).toBe("https://api.magiclamp.eco/carpetmint/gen7/v1/instance/Preprod");
+  it("URL instance: host theo mạng, đường đời hiện hành (Preprod đời 7) — không phải đường đời 6", () => {
+    expect(CARP_INSTANCE_URL("Preprod")).toBe("https://preprod.magiclamp.eco/carp/v1/instance/Preprod");
+    expect(CARP_INSTANCE_URL("Preview")).toBe("https://preview.magiclamp.eco/carp/v1/instance/Preview");
     expect(CARP_INSTANCE_URL("Preprod")).not.toBe("https://api.magiclamp.eco/carpetmint/v1/instance/Preprod");
   });
 

@@ -1,6 +1,6 @@
 // tests/carpInstance.test.ts — soft-pin cặp CARP với instance CarpetMint.
 // KHÔNG gọi mạng: phản hồi là bản rút gọn của GET
-// https://api.magiclamp.eco/carpetmint/v1/instance/Preprod (đo 2026-10-04), và
+// https://api.magiclamp.eco/carpetmint/v1/instance/Preprod (đo 2026-10-04; cặp anchor thay bằng đời 7 ngày 2026-10-10), và
 // `fetchCarpInstance` nhận một `fetch` giả.
 
 import { describe, expect, it } from "vitest";
@@ -12,8 +12,8 @@ import {
   parseCarpInstance,
 } from "../offchain/src/carpInstance.js";
 
-const POLICY = "71968a8df882a4dd24688b7904473a5d5f7e35332cba063e6ad7d379";
-const NAME = "59d0bc483cd12816c029130722b4288c41d7423475a54b512027fd24";
+const POLICY = "0ee76cb19fad694569d56423852e1dc519dcad4c0938babdfa5d3716";
+const NAME = "50eaf449c734fde2c3e73e52cc95889d235e489883683b5330bcabaa";
 
 const body = (over: Record<string, unknown> = {}) => ({
   network: "Preprod",

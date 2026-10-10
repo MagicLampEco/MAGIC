@@ -1,6 +1,7 @@
 // tests/carpInstance.test.ts — soft-pin cặp CARP với instance CarpetMint.
 // KHÔNG gọi mạng: phản hồi là bản rút gọn của GET
-// https://api.magiclamp.eco/carpetmint/v1/instance/Preprod (đo 2026-10-04; cặp anchor thay bằng đời 7 ngày 2026-10-10), và
+// https://api.magiclamp.eco/carpetmint/v1/instance/Preprod (đo 2026-10-04; cặp anchor thay bằng đời 7 ngày
+// 2026-10-10, URL sang tiền tố `gen7`; thư CARP nói hình dạng phản hồi giữ nguyên), và
 // `fetchCarpInstance` nhận một `fetch` giả.
 
 import { describe, expect, it } from "vitest";
@@ -39,13 +40,13 @@ describe("soft-pin CARP ↔ instance CarpetMint", () => {
     expect(CARP_INSTANCE_URL("Preprod")).not.toBe("https://api.magiclamp.eco/carpetmint/v1/instance/Preprod");
   });
 
-  it("instance hiện hành khớp cặp mặc định trong kho (đời 6)", () => {
+  it("instance hiện hành khớp cặp mặc định trong kho (đời 7)", () => {
     const inst = parseCarpInstance(body(), "Preprod");
     expect(inst).toMatchObject({ policyId: POLICY, assetName: NAME, label: "tCARP" });
     expect(() => assertCarpMatchesInstance(carpAssetClass("Preprod"), inst)).not.toThrow();
   });
 
-  it("ÂM — cặp đời 5 (đã thay) lệch instance ⟹ NÉM · cực đối: đời 6 nhận", () => {
+  it("ÂM — cặp đời 5 (đã thay) lệch instance ⟹ NÉM · cực đối: đời 7 nhận", () => {
     const inst = parseCarpInstance(body(), "Preprod");
     expect(() =>
       assertCarpMatchesInstance(

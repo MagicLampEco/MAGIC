@@ -1,92 +1,92 @@
-// MagicSDK/src/minAdaVault.ts — min-ADA của UTxO KÉT, tính từ chính datum.
+// MagicSDK/src/minAdaVault.ts — min-ADA CHÍNH XÁC của output KÉT lúc mở.
 //
-// ── VÌ SAO KHÔNG ĐỂ MỘT HẰNG ──────────────────────────────────────────────────
-// Trường `vaultLovelace` mang tên min-ADA nhưng bản trước mặc định một HẰNG
-// 2 ADA. Datum két thì phình theo `magic_batches` (trần 32) và
-// `loyalty_holdings` (trần 40), nên một hằng không thể đúng ở cả hai đầu.
+// ── VÌ SAO KHÔNG ĐỂ MỘT HẰNG, VÀ VÌ SAO KHÔNG CÒN BIÊN ────────────────────────
+// Trường `vaultLovelace` mang tên min-ADA nhưng bản đầu mặc định một HẰNG 2 ADA, trong khi datum
+// két phình theo `magic_batches` (trần 32) và `loyalty_holdings` (trần 40). Bản thứ hai (2026-09-21)
+// tính từ datum nhưng đếm phần NGOÀI datum bằng một hằng chặn trên 249 byte, nhân 1,2 rồi làm tròn
+// LÊN ADA chẵn. Đo trên đầu ra thật (coinsPerUtxoByte 4310, 2026-10-10): hằng đó thừa 93–135 byte,
+// và sau biên + làm tròn thì két Instant 0 LAMP mở ở 3 ADA trong khi min-ADA thật là 1 719 690;
+// két có LAMP + `wakeme_link` mở ở 4 ADA cho min 2 129 140.
 //
-// Đo 2026-09-21 bằng `MagicSDK/tests/minAdaVault.test.ts`, mã hoá `VaultDatum`
-// bằng ĐÚNG lược đồ sản xuất (không phải hex bịa). Cột "thô" là công thức dưới
-// đây, chưa cộng biên:
+// Thừa ở đây KHÔNG vô hại: két Instant không có nhánh đóng (mọi nhánh spend ghim NFT danh tính ở
+// output), nên lovelace đặt lúc mở khoá vĩnh viễn; và hàng rào phí áp luật L28 cho tx mở két
+// (lovelace két ≤ min(3 ADA, minADA + 517 040)) — két 0 LAMP 3 ADA trượt luật đó 763 270 lovelace.
+// Phần két phình ở lượt sinh sau do ví trả phí ứng (`VaultTxAPI/tests/minAdaFloor.test.ts`, đầu
+// tệp) — nên lúc mở chỉ cần đúng min-ADA của datum genesis, không cần biên cho datum tương lai.
 //
-//   batch  holding   datum (byte)   thô (lovelace)   +biên
-//     0       0           86          2 133 450      3 ADA
-//     1       0          120          2 279 990      3 ADA
-//     4       5          290          3 012 690      4 ADA
-//     8      10          492          3 883 310      5 ADA
-//    16      20          896          5 624 550      7 ADA
-//    32      40        1 705          9 111 340     11 ADA
-//   Schedule ở trần    1 704          9 107 030     10 ADA
+// ── CÁCH TÍNH ────────────────────────────────────────────────────────────────
+// Dựng lại ĐÚNG output mà Lucid sẽ ghi (`pay.ToAddressWithData`: `TransactionOutputBuilder` +
+// địa chỉ + `DatumOption.new_datum` inline) rồi hỏi CML `with_asset_and_min_required_coin` — cùng
+// phép tính Lucid dùng (`@lucid-evolution/lucid` 0.4.30 ▸ `ToAddressWithData`). Phép đó giải điểm
+// bất động: số byte của chính trường lovelace nằm trong số byte của output, nên không tính tay
+// một lần được. Không biên, không làm tròn.
 //
-// 🔴 Đọc bảng này ĐÚNG MỨC. Cột "thô" dùng `VAULT_NON_DATUM_BYTES` là một chặn
-// TRÊN cố ý, nên nó là một chặn TRÊN của min-ADA, không phải min-ADA của sổ
-// cái. Nó KHÔNG chứng minh rằng một két rỗng 2 ADA từng bị sổ cái từ chối —
-// nó chỉ nói rằng hằng 2 ADA không có biên nào cả, và biến mất khỏi vùng an
-// toàn trong vòng vài batch. Phát biểu chắc duy nhất rút ra được: một HẰNG
-// không trả lời được câu hỏi này, vì đại lượng thật thay đổi gấp hơn bốn lần
-// giữa két rỗng và két ở trần.
-//
-// Hỏng ở đây hỏng MUỘN: sổ cái từ chối output thiếu min-ADA ở lúc GỬI, tức sau
-// khi người dùng đã ký. Không có cổng nào ở phía trước nó.
-//
-// ── CÔNG THỨC, VÀ PHẠM VI CỦA NÓ ─────────────────────────────────────────────
-//   minAda = (160 + số byte của UTxO) × coinsPerUtxoByte
-// `coinsPerUtxoByte = 4310` từ Babbage. Đây là THAM SỐ GIAO THỨC, đổi được qua
-// một lượt cập nhật tham số ⟹ hằng dưới đây là một BẢN SAO và được khai đúng
-// như vậy. Chỗ nào tra được giá trị thật từ node thì truyền vào.
-//
-// 🔴 Con số trả về là CẬN DƯỚI cộng biên, KHÔNG phải min-ADA chính xác của sổ
-// cái. Phép đếm byte ở đây đếm datum theo độ dài thật và ước lượng phần còn lại
-// (địa chỉ, khối value, các tag CBOR) bằng hằng chặn trên. Nó an toàn theo đúng
-// một chiều: thừa thì tốn ADA của người dùng, thiếu thì giao dịch bị từ chối —
-// nên mọi hằng ở đây chọn phía THỪA.
+// Tên NFT danh tính phụ thuộc seed nhưng LUÔN dài 32 byte (`blake2b_256`), nên min-ADA không phụ
+// thuộc seed nào — `createVault` vẫn tính lại trên tên thật sau khi chọn seed và NÉM nếu lệch.
 
-/** Tham số giao thức Babbage+. BẢN SAO — xem khối trên. */
+import { CML, assetsToValue, type Assets } from "@lucid-evolution/lucid";
+
+/** Tham số giao thức Babbage+ (`coinsPerUtxoByte`). BẢN SAO — chỉ dùng khi Lucid không mang tham
+ *  số giao thức (Lucid dựng không nhà cung cấp, hoặc trình dựng giả trong bài kiểm). Đổi được qua
+ *  một lượt cập nhật tham số ⟹ đường thật luôn đọc từ Lucid (`coinsPerUtxoByteOf`). */
 export const COINS_PER_UTXO_BYTE_DEFAULT = 4310n;
 
-/** Phụ phí cố định mà công thức của sổ cái cộng vào mọi UTxO. */
-const UTXO_OVERHEAD_BYTES = 160n;
-
 /**
- * Chặn TRÊN cho phần không phải datum của một output két: địa chỉ base có phần
- * stake (57) + khối value mang lovelace, LAMP và NFT danh-tính (2 policy × 28
- * byte + tên + số lượng + tag) + các tag CBOR của chính output.
- * Chọn phía thừa có chủ ý — xem khối đỏ ở trên.
+ * `coinsPerUtxoByte` từ tham số giao thức Lucid đang mang — cùng nguồn mà trình dựng của Lucid
+ * dùng để kiểm/nâng lovelace output. Vắng hẳn (không có `config()`, hoặc `protocolParameters`
+ * rỗng) ⟹ `COINS_PER_UTXO_BYTE_DEFAULT`, và `source` nói rõ là bản sao. CÓ mà hình dạng lạ (không
+ * phải số nguyên dương) ⟹ NÉM: đó là dữ liệu hỏng của nhà cung cấp, đệm bằng hằng là giấu nó.
  */
-const VAULT_NON_DATUM_BYTES = 57n + 160n + 32n;
-
-/** Biên 20%, làm tròn LÊN ADA chẵn. Nhỏ CÓ CHỦ Ý: đủ nuốt sai số mã hoá, không
- *  đủ nuốt một lượt datum phình thêm nghìn byte. Biên lớn sẽ giấu đúng cái nó
- *  phải làm lộ ra. */
-const MARGIN_NUMERATOR   = 120n;
-const MARGIN_DENOMINATOR = 100n;
-const ONE_ADA            = 1_000_000n;
-
-/** Số byte của UTxO két, suy từ chuỗi CBOR hex của datum inline. */
-export function vaultUtxoSizeBytes(datumCborHex: string): bigint {
-  if (datumCborHex.length % 2 !== 0) {
-    // Hình dạng lạ thì NÉM, đừng đoán: một hex lẻ ký tự nghĩa là chuỗi đã hỏng
-    // ở đâu đó phía trên, và đoán ở đây là chở cái hỏng đi tiếp.
+export function coinsPerUtxoByteOf(
+  lucid: unknown,
+): { coinsPerUtxoByte: bigint; source: "lucid" | "default" } {
+  const cfg = (lucid as { config?: unknown } | null)?.config;
+  if (typeof cfg !== "function") return { coinsPerUtxoByte: COINS_PER_UTXO_BYTE_DEFAULT, source: "default" };
+  const pp = (cfg.call(lucid) as { protocolParameters?: { coinsPerUtxoByte?: unknown } } | undefined)
+    ?.protocolParameters;
+  if (pp === undefined || pp === null) {
+    return { coinsPerUtxoByte: COINS_PER_UTXO_BYTE_DEFAULT, source: "default" };
+  }
+  const v = pp.coinsPerUtxoByte;
+  const n = typeof v === "bigint" ? v
+    : typeof v === "number" && Number.isSafeInteger(v) ? BigInt(v)
+    : undefined;
+  if (n === undefined || n <= 0n) {
     throw new Error(
-      `datum CBOR hex lẻ ký tự (${datumCborHex.length}) — chuỗi đã hỏng, không phải min-ADA sai.`,
+      `protocolParameters.coinsPerUtxoByte của Lucid có hình dạng lạ (${String(v)}) — ` +
+      `không tính được min-ADA két.`,
     );
   }
-  return BigInt(datumCborHex.length / 2) + VAULT_NON_DATUM_BYTES;
+  return { coinsPerUtxoByte: n, source: "lucid" };
 }
 
-/** min-ADA thô (lovelace) cho UTxO két mang `datumCborHex`. */
-export function minAdaForVault(
-  datumCborHex: string,
-  coinsPerUtxoByte: bigint = COINS_PER_UTXO_BYTE_DEFAULT,
-): bigint {
-  return (UTXO_OVERHEAD_BYTES + vaultUtxoSizeBytes(datumCborHex)) * coinsPerUtxoByte;
-}
-
-/** min-ADA cộng biên 20%, làm tròn LÊN ADA chẵn. Đây là giá trị `createVault` dùng. */
-export function minAdaForVaultWithMargin(
-  datumCborHex: string,
-  coinsPerUtxoByte: bigint = COINS_PER_UTXO_BYTE_DEFAULT,
-): bigint {
-  const raw = (minAdaForVault(datumCborHex, coinsPerUtxoByte) * MARGIN_NUMERATOR) / MARGIN_DENOMINATOR;
-  return ((raw + ONE_ADA - 1n) / ONE_ADA) * ONE_ADA;
+/**
+ * min-ADA chính xác (lovelace) của output két: `address` thật, inline datum `datumCborHex` thật,
+ * `tokens` = mọi tài sản KHÔNG phải lovelace (NFT danh tính + LAMP nếu có; mục số lượng 0 không
+ * được có mặt — `createVault` đã bỏ nó). Mục `lovelace` trong `tokens` bị NÉM, không bị bỏ qua:
+ * người gọi truyền nó là đang nhầm phép tính này với value đầy đủ.
+ */
+export function exactMinAdaForVaultOutput(p: {
+  address: string;
+  datumCborHex: string;
+  tokens: Assets;
+  coinsPerUtxoByte: bigint;
+}): bigint {
+  if ("lovelace" in p.tokens) {
+    throw new Error(`exactMinAdaForVaultOutput: \`tokens\` không được mang mục lovelace.`);
+  }
+  if (p.datumCborHex.length === 0 || p.datumCborHex.length % 2 !== 0) {
+    throw new Error(
+      `datum CBOR hex rỗng hoặc lẻ ký tự (${p.datumCborHex.length}) — chuỗi đã hỏng, không phải min-ADA sai.`,
+    );
+  }
+  return CML.TransactionOutputBuilder.new()
+    .with_address(CML.Address.from_bech32(p.address))
+    .with_data(CML.DatumOption.new_datum(CML.PlutusData.from_cbor_hex(p.datumCborHex)))
+    .next()
+    .with_asset_and_min_required_coin(assetsToValue(p.tokens).multi_asset(), p.coinsPerUtxoByte)
+    .build()
+    .output()
+    .amount()
+    .coin();
 }

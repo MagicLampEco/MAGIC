@@ -36,7 +36,7 @@ import { DEFAULT_TX_VALIDITY_MS } from "./validity.js";
 /**
  * Trần mặc định của khoản min-ADA ví trả phí ứng (`Deployment.feePayerFrontingMaxLovelace`).
  * 5 tADA phủ ba ca của `feePayer.ts`: thread mới 2 ADA (`ENGAGE_MIN_LOVELACE`), két Instant 0 LAMP
- * mới (min-ADA genesis cộng biên của `MagicSDK/src/minAdaVault.ts`, làm tròn lên ADA chẵn), và phần
+ * mới (min-ADA CHÍNH XÁC của output két genesis — `MagicSDK/src/minAdaVault.ts`), và phần
  * nâng một lượt Sinh/làm mới checkpoint (đo trên Preprod 2026-10-04: 672 360 lovelace).
  */
 export const FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE = 5_000_000n;

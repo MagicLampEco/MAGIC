@@ -59,7 +59,7 @@ import { applyVaultValidator, windowOriginOf } from "./validatorScripts.js";
 import { assertLampPolicyId } from "./lampPolicy.js";
 import { buildInitialVaultDatum, normalizeWakemeLink } from "./vaultDatum.js";
 import { vaultIdAssetName } from "./vaultId.js";
-import { minAdaForVaultWithMargin } from "./minAdaVault.js";
+import { coinsPerUtxoByteOf, exactMinAdaForVaultOutput } from "./minAdaVault.js";
 
 // 🪦 `DEFAULT_VAULT_LOVELACE = 2_000_000n` đã GỠ. Nó là một hằng đứng ở chỗ
 // một phép tính phải đứng — xem `minAdaVault.ts`. Đừng dựng lại nó.
@@ -178,21 +178,37 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
   const vaultDatumCbor = Data.to(initialVault as never, datumSchema);
 
-  // ── min-ADA: TÍNH từ chính datum, không gõ cứng (Nợ #43, vế còn lại) ───────
-  // Bản trước mặc định một hằng 2 ADA cho một UTxO mà datum phình theo số batch
-  // và số holding. Hằng ấy đúng ở két rỗng và sai ngay từ batch đầu tiên — và
-  // sổ cái từ chối ở lúc GỬI, sau khi người dùng đã ký. Xem `minAdaVault.ts`.
+  // ── min-ADA: CHÍNH XÁC trên đúng output két sẽ ghi (Nợ #43; L28, 2026-10-10) ──
+  // Bản đầu gõ cứng 2 ADA (thiếu từ batch đầu); bản thứ hai ước chặn trên phần ngoài datum, cộng
+  // biên 20% rồi làm tròn LÊN ADA chẵn (thừa ~1,3 ADA ở két 0 LAMP — khoá vĩnh viễn, và trượt luật
+  // L28 của hàng rào phí). Nay: CML tính trên địa chỉ két thật + inline datum thật + value thật
+  // (NFT danh tính + LAMP nếu có), theo `coinsPerUtxoByte` của Lucid — không biên, không làm tròn.
+  // Xem `minAdaVault.ts`.
   //
-  // Người gọi truyền tay thì phải LỚN HƠN mức tính được, không nhỏ hơn: một
-  // giá trị tay quá thấp là đúng cái hỏng đang vá, nên nó bị NÉM chứ không bị
-  // âm thầm nâng lên. Lời gọi tay hợp lệ duy nhất là nâng thêm.
-  const minVaultLovelace = minAdaForVaultWithMargin(vaultDatumCbor);
+  // Tên NFT phụ thuộc seed, mà chế độ ví Phoenix tự trả phí cần lovelace két TRƯỚC khi chọn seed
+  // (seed lấy từ tập chọn). Tên luôn 32 byte ⟹ tính trước trên một tên giữ chỗ cùng độ dài, rồi
+  // TÍNH LẠI trên tên thật sau khi chọn seed và ném nếu lệch (khối "Chọn seed UTxO" bên dưới).
+  //
+  // Người gọi truyền tay thì phải ≥ mức tính được: một giá trị tay quá thấp là đúng cái hỏng đang
+  // vá, nên nó bị NÉM chứ không bị âm thầm nâng lên (Lucid sẽ âm thầm nâng — `ToAddressWithData`
+  // lấy max với min — nên cổng phải đứng ở đây). Lời gọi tay hợp lệ duy nhất là nâng thêm.
+  // `coinsPerUtxoByte`: từ tham số giao thức Lucid; CHỈ khi Lucid không mang tham số giao thức
+  // (trình dựng không nhà cung cấp, trình dựng giả trong bài kiểm) mới rơi về hằng bản sao
+  // `COINS_PER_UTXO_BYTE_DEFAULT` — `coinsPerUtxoByteOf` ném nếu tham số có mà hỏng hình dạng.
+  const { coinsPerUtxoByte } = coinsPerUtxoByteOf(lucid);
+  const vaultMinAdaWithNft = (nftUnit: string): bigint => exactMinAdaForVaultOutput({
+    address: vaultAddress,
+    datumCborHex: vaultDatumCbor,
+    tokens: { ...(vault.lampDeposit === 0n ? {} : { [lampUnit]: vault.lampDeposit }), [nftUnit]: 1n },
+    coinsPerUtxoByte,
+  });
+  const minVaultLovelace = vaultMinAdaWithNft(toUnit(vaultScriptHash, "00".repeat(32)));
   if (vault.vaultLovelace !== undefined && vault.vaultLovelace < minVaultLovelace) {
     throw new Error(
-      `vault.vaultLovelace = ${vault.vaultLovelace} lovelace THẤP HƠN min-ADA tính được ` +
-      `${minVaultLovelace} cho datum ${vaultDatumCbor.length / 2} byte. Sổ cái sẽ từ chối ` +
-      `giao dịch ở lúc GỬI, sau khi đã ký. Bỏ trống trường này để SDK tự tính, hoặc truyền ` +
-      `một giá trị LỚN HƠN.`,
+      `vault.vaultLovelace = ${vault.vaultLovelace} lovelace THẤP HƠN min-ADA chính xác ` +
+      `${minVaultLovelace} của output két (datum ${vaultDatumCbor.length / 2} byte, coinsPerUtxoByte ` +
+      `${coinsPerUtxoByte}). Sổ cái sẽ từ chối giao dịch ở lúc GỬI, sau khi đã ký. Bỏ trống trường ` +
+      `này để SDK tự tính, hoặc truyền một giá trị LỚN HƠN.`,
     );
   }
   const vaultLovelace = vault.vaultLovelace ?? minVaultLovelace;
@@ -269,6 +285,14 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     outputIndex: seedUtxo.outputIndex,
   });
   const vaultIdUnit = toUnit(vaultScriptHash, vaultIdName);
+  // Min-ADA ở trên tính trên tên NFT giữ chỗ; tính lại trên tên THẬT. Lệch nghĩa là giả định "tên
+  // luôn 32 byte" đã gãy (`vaultIdAssetName` đổi) ⟹ ném, đừng ghi một két lệch min-ADA.
+  if (vaultMinAdaWithNft(vaultIdUnit) !== minVaultLovelace) {
+    throw new Error(
+      `createVault: min-ADA két trên tên NFT thật (${vaultMinAdaWithNft(vaultIdUnit)}) lệch bản tính ` +
+      `trước (${minVaultLovelace}) — tên NFT danh tính không còn 32 byte?`,
+    );
+  }
 
   // Redeemer mint: MintVaultId { seed } — constructor 0 (xem schemas.ts).
   const mintRedeemer = Data.to(

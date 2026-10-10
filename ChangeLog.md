@@ -5,6 +5,26 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-10 — MagicSDK: lovelace két mặc định của `createVault` = min-ADA CHÍNH XÁC của output két
+
+**Đổi gì.** `createVault` đặt lovelace két mặc định bằng min-ADA chính xác của ĐÚNG output két sẽ ghi (địa chỉ két, inline
+datum, NFT danh tính + LAMP nếu có), tính bằng CML `with_asset_and_min_required_coin` — cùng phép Lucid dùng ở
+`pay.ToAddressWithData` — theo `coinsPerUtxoByte` của tham số giao thức Lucid (`MagicSDK/src/minAdaVault.ts` ▸
+`exactMinAdaForVaultOutput`, `coinsPerUtxoByteOf`); không biên, không làm tròn. Chỉ khi Lucid không mang tham số giao thức mới
+dùng hằng bản sao `COINS_PER_UTXO_BYTE_DEFAULT` (4310); tham số có mà hỏng hình dạng ⟹ ném. Cổng `vault.vaultLovelace` truyền tay
+giữ nguyên tinh thần: thấp hơn min chính xác dù 1 lovelace ⟹ ném. Ba hàm cũ `minAdaForVault` / `minAdaForVaultWithMargin` /
+`vaultUtxoSizeBytes` (ước chặn trên 249 byte cho phần ngoài datum, ×1,2, làm tròn LÊN ADA chẵn) đã gỡ — không còn nơi gọi nào
+(`git grep`); chúng không được xuất ở `index.ts`. Hàm mới được xuất ở `index.ts` để lớp dịch vụ đo bằng cùng một hàm.
+**Vì sao.** Hàng rào phí áp luật L28 cho tx mở két Instant: lovelace két ≤ min(3 ADA, minADA + 517 040). Bản cũ thừa 93–135 byte
+so với output thật rồi còn cộng biên và làm tròn: két 0 LAMP mở ở 3 ADA cho min 1 719 690 (trượt L28 763 270 lovelace). Két Instant
+không có nhánh đóng nên phần thừa khoá vĩnh viễn; phần két phình ở lượt sinh sau do ví trả phí ứng (thiết kế giữ nguyên —
+`VaultTxAPI/tests/minAdaFloor.test.ts`, đầu tệp). Bảng số đo từng ca: `MagicSDK/tests/createVaultExactMinAda.test.ts` (in ra lúc chạy).
+**Cái gì gãy.** Ai `import` ba hàm cũ từ `MagicSDK/src/minAdaVault.ts` theo đường tệp sẽ gãy lúc biên dịch (không có nơi gọi
+nào trong kho). Két mở mới mang ít lovelace hơn (~1,7–2,1 ADA thay vì 3–4 ADA với datum genesis) ⟹ lượt sinh đầu đòi nâng
+min-ADA nhiều hơn trước, do ví trả phí ứng (trần `FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE`). Bên gọi truyền `vaultLovelace` tay
+không đổi hành vi, trừ giá trị nằm giữa min chính xác và mức cũ nay hợp lệ. Fixture `VaultTxAPI/tests/feePayerNewcomer.test.ts`
+▸ `NEW_VAULT_LOVELACE` nay tính bằng `exactMinAdaForVaultOutput` thay vì số tròn 2 400 000.
+
 ## 2026-10-09 — VaultTxAPI 2.0.0: `/health` khai đúng khoá ký tiến trình giữ
 
 **Đổi gì.** `GET /health` thêm `signing_keys: [{ role: "platform", pkh }]` (role + băm khoá, không bao giờ giá trị khoá) và

@@ -700,7 +700,11 @@ khớp cả 20. Thay cho cụm đời 2 ngay dưới (đời 2 vẫn sống trê
 | `consume` cho két Schedule | `04c21e7ba9ce451a706911d2286a6dd5c463c5fa278fbccaf0186cb1` · `addr_test1wqzvy8nm488y2xnsdygay2r2dh2ugc79lgncl0x27qvxevgltd44s` |
 | `price_param` Instant / Schedule | `50979a23e015441c1cd64c4eb6c88fcf0b7f3936e89e629557be96a5` / `613a2a36835b14c6c9a487faa85c4e9a91f6dc9690aba26058caa225` |
 | `vault_registry` | `6d267efcd5068aae332fee8211205f6dd7d3642800d82d52f72a8667` |
-| Prepaid (`paid_fund`, két Prepaid, `consume` Prepaid) | **chưa dựng** — apply-param lúc biên dịch gồm policy CARP; dựng theo đời CARP kế tiếp. Seed `price_nft` Prepaid (`365ed123…#7`) còn đỗ. |
+| CARP (apply-param của `paid_fund`, két Prepaid) | đời 7: `0ee76cb19fad694569d56423852e1dc519dcad4c0938babdfa5d3716` / `50eaf449c734fde2c3e73e52cc95889d235e489883683b5330bcabaa` — khớp `https://preprod.magiclamp.eco/carp/v1/instance/Preprod` (sha256 `6e693cc2…`) lúc dựng |
+| `paid_fund` | `ff2d6a82da0bcdffad63f17a3a207eadd87f6a37bb3feab6955b9677` · `addr_test1wrlj665zmg9umladv0ch5w3q06kaslm2x7anl64kj4devacdh3ly0` — chưa có quỹ nào (quỹ theo DID, dựng lúc tài trợ) |
+| két Prepaid | `e4971260d10831b8407c8b8269266676c004f84b9aa36f1385ba0136` · `addr_test1wrjfwynq6yyrrwzq0j9cy6fxvemvqp8cfwd2xmcnskaqzdsghcgzt` — chưa có két mẫu |
+| `consume` cho két Prepaid | `cd93cbceb09cbf1805ae19f0dc935770812319508ba85ce8b114de6e` · `addr_test1wrxe8j7wkzwt7xq94cvlphyn2acgzgce2z96sh8gky2dumsgchw37` |
+| `price_param` Prepaid | `4bc915a1a5f0d6278abd4cea346b1abd2b96cad62a692a3b0f902f79` (NFT giá `b0a9ae9385d82a713e9b22fae28f20eb7f60939b964c299f3270f5b8`) |
 
 Ref-script CIP-33: két Instant `cbcad5b24ded3345bfaecfdc897dd41ade555eabd78effae81771edda785ba95#0` ·
 két Schedule `95d55a61ae37f31366ac65e79675ef04f868e82530c81da4db0ff7c0dc4a1632#0` · shard
@@ -708,7 +712,10 @@ két Schedule `95d55a61ae37f31366ac65e79675ef04f868e82530c81da4db0ff7c0dc4a1632#
 `bf474cd7b78e300aafc5cc92cfdc8c01b8ff6ae702bbeacadc7615e6275483e0#0` · `gb_shard`
 `1f0274838f61eef1a982778ff94d4f89852876e2ffaa587ed355fa8b4e66382f#0` · `consume` Instant
 `e0e572fad71cf08086764ef5a6569147ddb1cee6ee10fb6158187bd2826ae867#0` · `consume` Schedule
-`4edcc3856c96e5db06342cb1ef8357f0d4150ed16a1019dae51204bb43a333cd#0`.
+`4edcc3856c96e5db06342cb1ef8357f0d4150ed16a1019dae51204bb43a333cd#0` · két Prepaid
+`d132bc4c529476601bdc9ee868d60f1b6df89cc4e08601910040cfdbab53c769#0` · `paid_fund`
+`42814f45dfa8d7cb3439c3f46d1a62d7c0a943d0516d0ff6a64e2e42401fc7fc#0` · `consume` Prepaid
+`693f2abddfdfe870d030360de8f204d441654439e955745d82440c355622e54f#0`.
 
 Tx đáng giữ (2026-10-10, epoch 318):
 - beacon ρ + beacon GreenBack + 16 shard `gb_shard`: `e9c02eace6505f75c75b5f6b74ee8e9c14ba2bfc6ba8508a05e55d2108b6815d`.
@@ -718,6 +725,7 @@ Tx đáng giữ (2026-10-10, epoch 318):
 - đăng ký stake `commit`: `630ef136fe791ad3bcdb574f27b079b5a45770e0d50b2d82711627741d5046bc`.
 - beacon giá + Engage, Instant: `4068e1b29dec2fe54280e209621a22d4fdb4070d685d4e439b888d2eee20fdfa`; Schedule: `74e1ed9407ebab20a62982de362c90a91ae69127232d56ee9d4591a814d57266`. Bảng giá khởi tạo có dòng mã 20.
 - GreenBack `GB` = 10¹⁵ nanogic, seq 1: `90f58a04473d48b8dbfe899833df2a5fbd2ce2028582493883f99ec20673f2d6`. Đọc được tới hết epoch 319.
+- Prepaid (chỉ ref-script, không quỹ chung, không két mẫu — quỹ tài trợ dựng theo từng DID): ref két Prepaid `d132bc4c…`, ref `paid_fund` `42814f45…`; beacon giá + Engage Prepaid (seed `365ed123…#7`): `ed3a804dd9656f952db6912647684763573bcd6a14e991fc7cdc85cbf10b93b2`.
 
 Layout datum không đổi so với đời 2 (đọc lại bằng Koios 2026-10-10): két Instant 20 ô, thread
 `consume` (EngageDatum) 5 ô.

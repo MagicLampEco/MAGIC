@@ -370,7 +370,13 @@ async function main() {
     return;
   }
   if (beneficiary === null) {
+    // Hash + địa chỉ cũng phải vào sổ: bước 09 (VAULT_KIND=prepaid) và `gen --vault Prepaid` đọc
+    // chúng, và ở chế độ này không có pha genesis nào in hộ.
     console.log(`\n📋 Ghi vào state.${NETWORK}.sh (PREPAID_REFS_ONLY — không genesis):`);
+    console.log(`   PAID_FUND_HASH=${fundHash}`);
+    console.log(`   PAID_FUND_ADDR=${fundAddress}`);
+    console.log(`   VAULT_PREPAID_HASH=${vaultHash}`);
+    console.log(`   VAULT_PREPAID_ADDR=${vaultAddress}`);
     for (const [k, v] of refOut) console.log(`   ${k}=${v}`);
     return;
   }

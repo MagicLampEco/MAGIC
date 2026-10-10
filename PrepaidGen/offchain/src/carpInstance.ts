@@ -13,9 +13,13 @@
 
 import type { CarpNetwork } from "./constants.js";
 
-/** Điểm cuối CHỈ ĐỌC của nhà CarpetMint. Instance trả về do họ sinh, không sửa tay. */
+/** Điểm cuối CHỈ ĐỌC của nhà CarpetMint. Instance trả về do họ sinh, không sửa tay.
+ *  URL mang ĐỜI CARP và phải cùng đời với cặp trong `constants.ts`: từ đời 7 mỗi đời
+ *  có tiền tố riêng (`/carpetmint/gen7/…`), còn `/carpetmint/v1/instance/<mạng>` giữ
+ *  đời 6 tới ngày đời 6 đóng. Đổi đời ở `constants.ts` mà quên đổi ở đây ⟹ bộ deploy
+ *  NÉM vì lệch — đúng chiều an toàn, nhưng là một lượt dựng hỏng. */
 export const CARP_INSTANCE_URL = (network: CarpNetwork): string =>
-  `https://api.magiclamp.eco/carpetmint/v1/instance/${network}`;
+  `https://api.magiclamp.eco/carpetmint/gen7/v1/instance/${network}`;
 
 const HEX28 = /^[0-9a-f]{56}$/;
 

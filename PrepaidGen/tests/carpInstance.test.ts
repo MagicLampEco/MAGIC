@@ -34,6 +34,11 @@ const fakeFetch = (status: number, payload: unknown) =>
   }) as unknown as typeof fetch;
 
 describe("soft-pin CARP ↔ instance CarpetMint", () => {
+  it("URL instance cùng đời với cặp CARP trong constants (đời 7 ⟹ tiền tố gen7)", () => {
+    expect(CARP_INSTANCE_URL("Preprod")).toBe("https://api.magiclamp.eco/carpetmint/gen7/v1/instance/Preprod");
+    expect(CARP_INSTANCE_URL("Preprod")).not.toBe("https://api.magiclamp.eco/carpetmint/v1/instance/Preprod");
+  });
+
   it("instance hiện hành khớp cặp mặc định trong kho (đời 6)", () => {
     const inst = parseCarpInstance(body(), "Preprod");
     expect(inst).toMatchObject({ policyId: POLICY, assetName: NAME, label: "tCARP" });

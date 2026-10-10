@@ -11,7 +11,7 @@
 taad K6 `95bce8a9…`), thay v5 `118d5352…`; `tests/wakemeVaultHash.test.ts` ghim v5b và ghim rằng v5 không còn được trả.
 `scripts/DEPLOYED.md` thêm mục cụm phục vụ đời 3 (Instant + Schedule, biên dịch từ `d3bfd6ad`), đời 2 đánh dấu đã bị thay.
 `PrepaidGen/offchain/src/constants.ts` ▸ cặp CARP Preprod = tCARP đời 7 (`0ee76cb1…` / `50eaf449…`), thay đời 6 `71968a8d…`;
-hai bài kiểm ghim cặp mới. Cặp này là apply-param lúc biên dịch của `paid_fund` và két Prepaid đời 3.
+hai bài kiểm ghim cặp mới. Cặp này là apply-param lúc biên dịch của `paid_fund` và két Prepaid đời 3. `carpInstance.ts` ▸ `CARP_INSTANCE_URL` trỏ instance đời 7 (`/carpetmint/gen7/v1/instance/<mạng>`); URL cũ giữ đời 6.
 **Vì sao.** Hash két Wakeme là apply-param #8 của két Instant và của `paid_fund`; sổ `vault_registry` một-lần chứa hash hai két
 ⟹ két Wakeme đổi thì dựng lại trọn cụm (tiền lệ đời 2, 2026-10-04). Phần Prepaid của đời 3 chưa dựng: nó nhận policy CARP lúc
 biên dịch và dựng theo đời CARP kế tiếp.

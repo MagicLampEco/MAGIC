@@ -25,6 +25,14 @@ min-ADA nhiều hơn trước, do ví trả phí ứng (trần `FEE_PAYER_DEFAUL
 không đổi hành vi, trừ giá trị nằm giữa min chính xác và mức cũ nay hợp lệ. Fixture `VaultTxAPI/tests/feePayerNewcomer.test.ts`
 ▸ `NEW_VAULT_LOVELACE` nay tính bằng `exactMinAdaForVaultOutput` thay vì số tròn 2 400 000.
 
+**Cùng ngày — VaultTxAPI từ chối `paid_fund.sponsor.beneficiary_datum` chứa map hoặc Constr chỉ số > 127.** `config.ts` ▸
+`parseFundBeneficiary` (hàm phụ `nonCanonicalLengthShape`) ném lúc khởi động. Lucid mã hoá hai hình dạng đó dài hơn 1 byte so với
+dạng định-độ-dài mà hàng rào phí tính min-ADA (map `bf…ff` thay `a…`; Constr > 127 dạng thẻ 102), nên đầu ra quỹ ở lượt nạp CARP
+dư đúng `coinsPerUtxoByte` mỗi chỗ và bị từ chối ký theo luật lovelace ra = max(vào, min-ADA). Hạ lovelace không vá được vì sổ
+cái tính trên byte gốc. Đo các đường còn lại (lượt sinh Instant, làm mới checkpoint, Prepaid nạp/đốt, gắn DID vào thread):
+chênh 0 với luật đó. Không cấu hình đang khai nào đặt `beneficiary_datum`. **Cái gì gãy:** cấu hình có datum bên hưởng dạng
+map không khởi động được nữa.
+
 ## 2026-10-09 — VaultTxAPI 2.0.0: `/health` khai đúng khoá ký tiến trình giữ
 
 **Đổi gì.** `GET /health` thêm `signing_keys: [{ role: "platform", pkh }]` (role + băm khoá, không bao giờ giá trị khoá) và

@@ -27,6 +27,7 @@ import { getAddressDetails, validatorToScriptHash } from "@lucid-evolution/lucid
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
+import { plutusDataFromCbor } from "@magiclamp/prepaidgen-sdk";
 import { canonicalDatumCbor } from "./sponsorFund.js";
 
 import { FEE_PURPOSE_ROUTES, type FeePurposeRoute } from "./locks.js";
@@ -1271,6 +1272,24 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
   };
 }
 
+/** Tìm map hoặc Constr chỉ số > 127 ở bất kỳ độ sâu nào của một giá trị Plutus Data (dạng Lucid `Data`). */
+function nonCanonicalLengthShape(d: unknown): string | undefined {
+  if (d instanceof Map) return "một map";
+  if (Array.isArray(d)) {
+    for (const x of d) {
+      const r = nonCanonicalLengthShape(x);
+      if (r !== undefined) return r;
+    }
+    return undefined;
+  }
+  if (typeof d === "object" && d !== null && "index" in d && "fields" in d) {
+    const idx = (d as { index: number }).index;
+    if (idx > 127) return `một Constr chỉ số ${idx}`;
+    return nonCanonicalLengthShape((d as { fields: unknown[] }).fields);
+  }
+  return undefined;
+}
+
 /**
  * `paid_fund.sponsor.beneficiary` (+ `beneficiary_datum`, CBOR hex) — đích nhận CARP của quỹ open-fund tạo.
  * Các vế ở đây là gương của `validate_mint_fund_nft` (`PrepaidGen/onchain/validators/prepaid.ak`): sai một vế
@@ -1320,10 +1339,21 @@ function parseFundBeneficiary(
     // lúc khởi động rằng datum ghim đã ở dạng chuẩn, nên gỡ bước này là dịch vụ không khởi động được.
     // Hex không phải Plutus Data thì chết ở đây, không phải ở yêu cầu đầu tiên.
     let canonical: string;
+    let value: unknown;
     try {
       canonical = canonicalDatumCbor(c);
+      value = plutusDataFromCbor(c);
     } catch (e) {
       throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum không giải mã được thành Plutus Data: ${(e as Error).message}`);
+    }
+    // Map và Constr chỉ số > 127 (thẻ CBOR 102) là hai hình dạng Lucid mã hoá DÀI hơn dạng định-độ-dài mà Feecover
+    // dùng tính min-ADA (`bf…ff` so với `a…`): đầu ra quỹ ra dư đúng coinsPerUtxoByte mỗi chỗ, và Feecover từ chối ký
+    // (luật lovelace ra = max(vào, min-ADA)). Hạ lovelace không vá được vì sổ cái tính trên byte gốc ⟹ chặn lúc khởi động.
+    const odd = nonCanonicalLengthShape(value);
+    if (odd !== undefined) {
+      throw new Error(
+        `[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum chứa ${odd} — Lucid mã hoá nó dài hơn ` +
+        `dạng Feecover tính min-ADA, đầu ra quỹ dư lovelace và bị từ chối ký. Dùng datum không có map / Constr > 127.`);
     }
     return { address: a, datumCbor: canonical };
   }

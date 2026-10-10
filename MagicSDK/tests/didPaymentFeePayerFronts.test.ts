@@ -120,7 +120,7 @@ describe("createVault + funding, ví trả phí bên thứ ba: ví trả phí �
     const dpOuts = v.outputs.filter(o => o.address === DP_ADDR);
     expect(dpOuts).toEqual([{ address: DP_ADDR, lovelace: 1_240_954n, lamp: 0n, units: 0 }]);
     expect(res.funding?.returned).toEqual({ lovelace: 1_240_954n });
-    // (b) két: trọn 1.000 LAMP + NFT, lovelace ≥ min-ADA thật của CHÍNH output đó.
+    // (b) két: trọn 1.000 LAMP + NFT, lovelace = min-ADA thật của CHÍNH output đó.
     const vaultOuts = v.outputs.filter(o => o.address === VAULT_ADDR);
     expect(vaultOuts).toHaveLength(1);
     expect(vaultOuts[0]!.lamp).toBe(1_000_000_000n);
@@ -128,7 +128,8 @@ describe("createVault + funding, ví trả phí bên thứ ba: ví trả phí �
     const vaultIdx = v.outputs.findIndex(o => o.address === VAULT_ADDR);
     const vaultCml = tx.body().outputs().get(vaultIdx);
     const minAda = CML.min_ada_required(vaultCml, PROTOCOL_PARAMETERS_DEFAULT.coinsPerUtxoByte);
-    expect(vaultOuts[0]!.lovelace >= minAda).toBe(true);
+    // ĐÚNG min-ADA, không biên (2026-10-10): ví trả phí chỉ ứng đúng phần sổ cái đòi.
+    expect(vaultOuts[0]!.lovelace).toBe(minAda);
     expect(vaultOuts[0]!.lovelace > DP_DID1.assets.lovelace!).toBe(true);   // did_payment không thể đã trả nó
     // (c) ví trả phí: góp đúng phí + thối + khoản ứng = lovelace két.
     const feeChange = sumAt(v.outputs, FEE_ADDR);

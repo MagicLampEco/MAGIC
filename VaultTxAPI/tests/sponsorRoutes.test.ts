@@ -667,6 +667,14 @@ describe("ghim cấu hình của fund-vault — trước khi giữ khoá, 0 lư�
     expect(bad({ ...scan, beneficiary: BEN, beneficiary_datum: "ff" })).toThrow(/Plutus Data/);
     expect(parseDeployment(deploymentJson("Preprod", { pins: { ...scan, beneficiary: BEN, beneficiary_datum: "d87980" } }), "Preprod")
       .prepaid!.sponsor!.beneficiary).toEqual({ address: BEN, datumCbor: "d87980" });
+    // ÂM: map (lồng trong Constr) và Constr chỉ số 128 (thẻ 102) ⟹ ném lúc khởi động (Lucid mã hoá dài hơn dạng
+    // Feecover tính min-ADA). CẶP: Constr 127 (thẻ 1400, cùng độ dài hai bên) và list lồng ⟹ nạp được.
+    expect(bad({ ...scan, beneficiary: BEN, beneficiary_datum: "d87981a10102" })).toThrow(/một map/);
+    expect(bad({ ...scan, beneficiary: BEN, beneficiary_datum: "d86682188080" })).toThrow(/Constr chỉ số 128/);
+    expect(parseDeployment(deploymentJson("Preprod", { pins: { ...scan, beneficiary: BEN, beneficiary_datum: "d9057880" } }), "Preprod")
+      .prepaid!.sponsor!.beneficiary!.address).toBe(BEN);
+    expect(parseDeployment(deploymentJson("Preprod", { pins: { ...scan, beneficiary: BEN, beneficiary_datum: "d879818201820203" } }), "Preprod")
+      .prepaid!.sponsor!.beneficiary!.address).toBe(BEN);
     // CẶP: khối mặc định nạp được và giữ đúng giá trị.
     const d = parseDeployment(deploymentJson("Preprod"), "Preprod");
     expect(d.prepaid!.sponsor).toEqual({ fundUnits: PINS.fund_units, addresses: PINS.addresses, maxCarpAmount: 100n });

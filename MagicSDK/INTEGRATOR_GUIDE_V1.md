@@ -269,8 +269,8 @@ sau được qua `updateProfile()` ([§8](#8-đổi-profile)) — nhưng batch �
 ### Trước khi bấm tạo, kiểm
 
 - Ví có ≥ `lampDeposit` LAMP (SDK tự kiểm và ném lỗi nêu rõ thiếu bao nhiêu).
-- Ví có ≥ `vaultLovelace` ADA (mặc định 2 ADA) **cộng** phí mạng, **cộng** min-ADA cho chính
-  output NFT.
+- Ví có đủ ADA cho lovelace của output két **cộng** phí mạng. Bỏ trống `vaultLovelace` thì SDK đặt
+  đúng min-ADA chính xác của output két (datum + NFT + LAMP), theo `coinsPerUtxoByte` của Lucid.
 - Ví có ít nhất một UTxO để làm seed. Ví rỗng ⇒ không có seed ⇒ không mint được NFT.
 - `Instant`: đủ `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash`,
   `wakemeVaultHash`.

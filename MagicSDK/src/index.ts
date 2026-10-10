@@ -13,6 +13,12 @@ export {
   VaultDatumSchema,
 } from "./createVault.js";
 
+// min-ADA CHÍNH XÁC của output két lúc mở — đúng phép `createVault` dùng để đặt lovelace két mặc
+// định. Xuất ra để lớp dịch vụ (hàng rào phí, bài kiểm) đo bằng CÙNG một hàm, không dựng bản thứ hai.
+export {
+  exactMinAdaForVaultOutput, coinsPerUtxoByteOf, COINS_PER_UTXO_BYTE_DEFAULT,
+} from "./minAdaVault.js";
+
 // Khuôn `wakeme_link` của két Instant (rỗng hoặc 32 byte = `owner_commit` của DID). Lớp dịch vụ
 // kiểm đầu vào bằng đúng hàm SDK dùng để dựng datum genesis.
 export { normalizeWakemeLink, WAKEME_LINK_RE } from "./vaultDatum.js";

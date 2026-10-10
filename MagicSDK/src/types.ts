@@ -146,8 +146,9 @@ export interface InitialVaultConfig {
   wakemeLink?: string;
   /** Profile at creation. Default "Flame". */
   profile?: Profile;
-  /** Lovelace gắn vào UTxO két. **Bỏ trống là đường ĐÚNG** — SDK tính min-ADA
-   *  từ chính datum sắp ghi (`minAdaVault.ts`).
+  /** Lovelace gắn vào UTxO két. **Bỏ trống là đường ĐÚNG** — SDK đặt đúng min-ADA
+   *  CHÍNH XÁC của output két sắp ghi (địa chỉ + inline datum + NFT + LAMP, tính bằng
+   *  CML theo `coinsPerUtxoByte` của Lucid; không biên, không làm tròn — `minAdaVault.ts`).
    *
    *  Vì sao không còn một hằng: UTxO két mang datum cộng LAMP cộng NFT danh-tính,
    *  và datum phình theo `magic_batches` (trần 32) và `loyalty_holdings`
@@ -155,9 +156,10 @@ export interface InitialVaultConfig {
    *  từ batch ĐẦU TIÊN; ở trần thì thiếu gần 13 ADA. Sổ cái từ chối một output
    *  thiếu min-ADA ở lúc GỬI — tức sau khi người dùng đã ký.
    *
-   *  Truyền tay thì chỉ được LỚN HƠN mức tính được; nhỏ hơn thì `createVault`
-   *  NÉM chứ không âm thầm nâng lên. Âm thầm nâng là dựng một vỏ im lặng ở đúng
-   *  chỗ người gọi cần biết mình đã nhầm. */
+   *  Truyền tay thì không được NHỎ HƠN mức tính được; nhỏ hơn dù 1 lovelace thì
+   *  `createVault` NÉM chứ không âm thầm nâng lên. Âm thầm nâng là dựng một vỏ im
+   *  lặng ở đúng chỗ người gọi cần biết mình đã nhầm. Lớn hơn thì được, nhưng tx
+   *  mở két đi qua ví trả phí còn chịu trần riêng của hàng rào phí (L28). */
   vaultLovelace?: bigint;
   /** @deprecated 🪦 KHÔNG còn đường nào dùng được — nhánh uỷ nhiệm bị bỏ khỏi mô
    *  hình ngày 2026-09-16 (Nợ #14). `validate_mint_vault_id` ép

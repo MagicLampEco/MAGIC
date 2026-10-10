@@ -131,7 +131,7 @@ người gọi.
 | `vault.ownerPkh` | `string` (28 byte hex) | ✅ | khoá chủ — người duy nhất ký được hành động đòi chủ |
 | `vault.lampDeposit` | `bigint` (oildrop) | ✅ | ví người gọi phải có ≥ số này |
 | `vault.profile` | `"Ember"` \| `"Flame"` \| `"Lantern"` | | mặc định `"Flame"` |
-| `vault.vaultLovelace` | `bigint` | | mặc định `2_000_000` |
+| `vault.vaultLovelace` | `bigint` | | mặc định = min-ADA chính xác của output két (`exactMinAdaForVaultOutput`); truyền thấp hơn là ném lỗi |
 | `vault.personalDelegate` | `string \| null` | | **không dùng được lúc tạo** — truyền khác `null` là ném lỗi; dùng redeemer `SetDelegate` sau |
 | `seedUtxo` | `UTxO` | | seed one-shot cho NFT danh tính; bỏ trống thì SDK tự chọn tất định qua `pickSeedUtxo` |
 | `tipPosixMs` | `bigint` | | ép epoch hiện tại, dùng cho test tất định |

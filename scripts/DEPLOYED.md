@@ -672,7 +672,59 @@ ngoài `node_modules` rỗng; `ConsumeMAGIC/onchain/validators/consume.ak` khôn
 
 ---
 
-## Preprod — 2026-10-04 · cụm phục vụ ĐỜI 2 (két Wakeme v5) trên tLAMP `493002cc…`
+## Preprod — 2026-10-10 · cụm phục vụ ĐỜI 3 (két Wakeme v5b, taad K6) trên tLAMP `493002cc…`
+
+Dựng lại TRỌN cụm vì két Wakeme lên v5b (dựng trên taad K6; chỉ DID gốc genesis được két có suất).
+Cùng lý do với đời 2 ngay dưới: hash két Wakeme là apply-param #8 của két Instant, và sổ
+`vault_registry` một-lần chứa hash hai két. Biên dịch từ `origin/main` @ `d3bfd6ad` (có mã 20
+`platform_fee_unit` giá cố định) cộng hằng `WAKEME_VAULT_HASH_BY_NETWORK.Preprod` = v5b. Tám seed
+one-shot đỗ trước ở tx `365ed12327f5109068534243843f866994d33542fecc69ebefe71bfc2b294aaa` (#0..#7),
+nên 20 hash của cụm tính được trước khi nộp tx nào, bằng hai đường độc lập (`clusterHashes.ts` và
+một bộ tính ngoài cây), và mỗi bước deploy đối chiếu lại với tệp kỳ vọng (`DEPLOY_EXPECT_HASHES`):
+khớp cả 20. Thay cho cụm đời 2 ngay dưới (đời 2 vẫn sống trên chuỗi, không còn được phục vụ).
+**Bản sao có nhãn**, chép 2026-10-10; nguồn chân lý là chuỗi.
+
+| thành phần | giá trị |
+|---|---|
+| tLAMP | `493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` / `744c414d50` |
+| anchor DID (`taad` K6) | `95bce8a995d0c68d954bf5e876d4eb0ae2629a70cf8afe9fe5a3ec04` (thay `e97ace34…`; chỉ dùng ngoài chuỗi, cho `did_stake`) |
+| két Wakeme (apply-param #8) | `a19a11b07abab29061902f6bd6c69ddf2747ab43b37ddc8fe57a0ffa` (v5b) |
+| `rate_param` (beacon ρ) | `72ec9fedca0024c1dd1fbfe2bfe23d31e69218d5d4eba0a6065b7982` |
+| `greenback_beacon` | `52c38406e99de5261aa76eb32d9e92e24d195185d464a6c99176a0e1` |
+| `gb_shard` | `3da4eb615d869d3a2d79d63ee123ae93322a2bf525f6255d866ab670` |
+| shard ScheduleGen | `8a5ba50d8441451ccc55cd8b0d55ecb187569e03df9f179ffd7c2e9b` (NFT `5bdbd99b19954ab0307852fe0610f033d75f7ffbdaba8456e608bbf5`) |
+| két Instant | `1bc65c005cde71bee2ea21d5b3391954de610470e843c36bda851ddb` · `addr_test1wqduvhqqtn08r0hzagsatveer92ducgywr5y8smtm2z3mkc3vhhla` |
+| két Schedule | `edc1390a424097ceec957f87fc66d018f4bb4242eed46fe7869840a8` · `addr_test1wrkuzwg2gfqf0nhvj4lc0lrx6qv0fw6zgthdgml8s6vyp2qe3grrn` |
+| stake `commit` | `20f9ebd31377ce831686df70171ca9fa9e5994b1b88798b1f072596b` |
+| `consume` cho két Instant | `3db36ddba7f5d2a7881c14c9832036e0958baee032ba1855cd54accd` · `addr_test1wq7mxmwm5l6a9fugrs2vnqeqxmsftzawuqet5xz4e422engzzcywy` |
+| `consume` cho két Schedule | `04c21e7ba9ce451a706911d2286a6dd5c463c5fa278fbccaf0186cb1` · `addr_test1wqzvy8nm488y2xnsdygay2r2dh2ugc79lgncl0x27qvxevgltd44s` |
+| `price_param` Instant / Schedule | `50979a23e015441c1cd64c4eb6c88fcf0b7f3936e89e629557be96a5` / `613a2a36835b14c6c9a487faa85c4e9a91f6dc9690aba26058caa225` |
+| `vault_registry` | `6d267efcd5068aae332fee8211205f6dd7d3642800d82d52f72a8667` |
+| Prepaid (`paid_fund`, két Prepaid, `consume` Prepaid) | **chưa dựng** — apply-param lúc biên dịch gồm policy CARP; dựng theo đời CARP kế tiếp. Seed `price_nft` Prepaid (`365ed123…#7`) còn đỗ. |
+
+Ref-script CIP-33: két Instant `cbcad5b24ded3345bfaecfdc897dd41ade555eabd78effae81771edda785ba95#0` ·
+két Schedule `95d55a61ae37f31366ac65e79675ef04f868e82530c81da4db0ff7c0dc4a1632#0` · shard
+`b43dcb7e65b718d0b042712c288e69b07eb989d5af521c71e1145eb91e86c0da#0` · `commit`
+`bf474cd7b78e300aafc5cc92cfdc8c01b8ff6ae702bbeacadc7615e6275483e0#0` · `gb_shard`
+`1f0274838f61eef1a982778ff94d4f89852876e2ffaa587ed355fa8b4e66382f#0` · `consume` Instant
+`e0e572fad71cf08086764ef5a6569147ddb1cee6ee10fb6158187bd2826ae867#0` · `consume` Schedule
+`4edcc3856c96e5db06342cb1ef8357f0d4150ed16a1019dae51204bb43a333cd#0`.
+
+Tx đáng giữ (2026-10-10, epoch 318):
+- beacon ρ + beacon GreenBack + 16 shard `gb_shard`: `e9c02eace6505f75c75b5f6b74ee8e9c14ba2bfc6ba8508a05e55d2108b6815d`.
+- 16 shard ScheduleGen: `d1118a333069e60a58c8077299a171b12969a370123d5966d950e25d27b0e222`.
+- két Instant mẫu (100 tLAMP): `a78eb9297b2d6eca2a25375878b46e32a5c6928debf95081bfc2c91836661d33`; két Schedule mẫu (100 tLAMP): `a9cebd8c371105a25bd5596b18c9d58ceb6092764eeab871ff6b0bf98f78ea13`.
+- sổ két (VRG) với `[két Instant, két Schedule]`: `8537072b8e574a2a49d0859cea06768256a68d23ca6f93f285c4e32bd7fcec99`.
+- đăng ký stake `commit`: `630ef136fe791ad3bcdb574f27b079b5a45770e0d50b2d82711627741d5046bc`.
+- beacon giá + Engage, Instant: `4068e1b29dec2fe54280e209621a22d4fdb4070d685d4e439b888d2eee20fdfa`; Schedule: `74e1ed9407ebab20a62982de362c90a91ae69127232d56ee9d4591a814d57266`. Bảng giá khởi tạo có dòng mã 20.
+- GreenBack `GB` = 10¹⁵ nanogic, seq 1: `90f58a04473d48b8dbfe899833df2a5fbd2ce2028582493883f99ec20673f2d6`. Đọc được tới hết epoch 319.
+
+Layout datum không đổi so với đời 2 (đọc lại bằng Koios 2026-10-10): két Instant 20 ô, thread
+`consume` (EngageDatum) 5 ô.
+
+---
+
+## Preprod — 2026-10-04 · cụm phục vụ ĐỜI 2 (két Wakeme v5) trên tLAMP `493002cc…` · ĐÃ BỊ THAY bởi đời 3 ngay trên
 
 Dựng lại TRỌN cụm vì két Wakeme lên v5 (`src_add_delay_periods` W = 0 trên Preprod). Hash két
 Wakeme là apply-param #8 của két Instant, và sổ `vault_registry` một-lần chứa hash hai két, nên

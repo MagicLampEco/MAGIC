@@ -5,6 +5,18 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-10 — Preprod: két Wakeme v5b, cụm phục vụ đời 3
+
+**Đổi gì.** `ProtocolUtils/src/index.ts` ▸ `WAKEME_VAULT_HASH_BY_NETWORK.Preprod` = `a19a11b0…0ffa` (két Wakeme v5b, dựng trên
+taad K6 `95bce8a9…`), thay v5 `118d5352…`; `tests/wakemeVaultHash.test.ts` ghim v5b và ghim rằng v5 không còn được trả.
+`scripts/DEPLOYED.md` thêm mục cụm phục vụ đời 3 (Instant + Schedule, biên dịch từ `d3bfd6ad`), đời 2 đánh dấu đã bị thay.
+**Vì sao.** Hash két Wakeme là apply-param #8 của két Instant và của `paid_fund`; sổ `vault_registry` một-lần chứa hash hai két
+⟹ két Wakeme đổi thì dựng lại trọn cụm (tiền lệ đời 2, 2026-10-04). Phần Prepaid của đời 3 chưa dựng: nó nhận policy CARP lúc
+biên dịch và dựng theo đời CARP kế tiếp.
+**Cái gì gãy.** VaultTxAPI đọc hằng này ở `wakeme.ts`, `genV2.ts`, `sponsor.ts` ⟹ một tiến trình chạy mã này với tệp deployment
+đời 2 sẽ báo lệch script (két Instant đời 2 nướng `118d5352…`). Mã này và tệp deployment đời 3 phải lên CÙNG một lượt; tiến trình
+Prepaid đổi khi phần Prepaid đời 3 có trên chuỗi.
+
 ## 2026-10-09 — VaultTxAPI 2.0.0: `/health` khai đúng khoá ký tiến trình giữ
 
 **Đổi gì.** `GET /health` thêm `signing_keys: [{ role: "platform", pkh }]` (role + băm khoá, không bao giờ giá trị khoá) và

@@ -12,6 +12,7 @@ import {
   credentialToAddress, credentialToRewardAddress, unixTimeToSlot, validatorToScriptHash, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 import { encodeBindDidRedeemer } from "@magiclamp/consumemagic";
+import { COINS_PER_UTXO_BYTE_DEFAULT, exactMinAdaForVaultOutput } from "@magiclamp/sdk";
 import type { OwnerRef } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
 
@@ -206,7 +207,15 @@ function bindTx(o: { ownerInput?: boolean; owner?: OwnerRef; thread?: UTxO; rewa
   });
 }
 
-const NEW_VAULT_LOVELACE = 2_400_000n;
+/** Lovelace output két mới = đúng thứ `createVault` đặt: min-ADA CHÍNH XÁC của chính output đó
+ *  (`@magiclamp/sdk` ▸ `exactMinAdaForVaultOutput`), không phải một số tròn. Chủ khoá và chủ script
+ *  cùng cỡ datum (hash 28 byte, tag constructor cùng độ dài) ⟹ một giá trị cho mọi ca của tệp. */
+const NEW_VAULT_LOVELACE = exactMinAdaForVaultOutput({
+  address: VAULT_ADDRESS,
+  datumCborHex: datumHex({ owner: KEY_OWNER, lampBalanceOildrop: 0n, lampLockedOildrop: 0n, instantUnlockMs: 0n, wakemeLink: DID }),
+  tokens: { [VAULT_ID_UNIT]: 1n },
+  coinsPerUtxoByte: COINS_PER_UTXO_BYTE_DEFAULT,
+});
 /** create-vault két instant 0 LAMP qua ví trả phí: ví ứng trọn lovelace output két mới. */
 function createTx(o: { ownerInput?: boolean; owner?: OwnerRef; reward?: RewardLeg } = {}): string {
   const fee = 190_000n;

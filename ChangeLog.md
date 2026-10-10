@@ -5,6 +5,24 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-10 — Preprod: két Wakeme v5b, cụm phục vụ đời 3
+
+**Đổi gì.** `ProtocolUtils/src/index.ts` ▸ `WAKEME_VAULT_HASH_BY_NETWORK.Preprod` = `a19a11b0…0ffa` (két Wakeme v5b, dựng trên
+taad K6 `95bce8a9…`), thay v5 `118d5352…`; `tests/wakemeVaultHash.test.ts` ghim v5b và ghim rằng v5 không còn được trả.
+`scripts/DEPLOYED.md` thêm mục cụm phục vụ đời 3 (Instant + Schedule, biên dịch từ `d3bfd6ad`), đời 2 đánh dấu đã bị thay.
+`PrepaidGen/offchain/src/constants.ts` ▸ cặp CARP Preprod = tCARP đời 7 (`0ee76cb1…` / `50eaf449…`), thay đời 6 `71968a8d…`;
+hai bài kiểm ghim cặp mới. Cặp này là apply-param lúc biên dịch của `paid_fund` và két Prepaid đời 3. `carpInstance.ts` ▸
+`CARP_INSTANCE_URL` đọc instance theo host của mạng: `https://<host mạng>/carp/v1/instance/<mạng>` (`api.` chỉ cho mainnet;
+Preprod trả đời hiện hành = đời 7); đường cũ `api.magiclamp.eco/carpetmint/v1/instance/Preprod` giữ đời 6.
+Phần Prepaid đời 3 đã dựng (chỉ ref-script — quỹ tài trợ dựng theo từng DID, không quỹ chung): `paid_fund` `ff2d6a82…`, két
+Prepaid `e4971260…`, `consume` Prepaid `cd93cbce…`. `scripts/deploy/10_deploy_prepaid.ts` ở chế độ `PREPAID_REFS_ONLY` nay in cả
+hash + địa chỉ `paid_fund`/két Prepaid cho sổ (bản trước chỉ in hai dòng ref, nên bước 09 Prepaid và `gen --vault Prepaid` thiếu khoá).
+**Vì sao.** Hash két Wakeme là apply-param #8 của két Instant và của `paid_fund`; sổ `vault_registry` một-lần chứa hash hai két
+⟹ két Wakeme đổi thì dựng lại trọn cụm (tiền lệ đời 2, 2026-10-04).
+**Cái gì gãy.** VaultTxAPI đọc hằng này ở `wakeme.ts`, `genV2.ts`, `sponsor.ts` ⟹ một tiến trình chạy mã này với tệp deployment
+đời 2 sẽ báo lệch script (két Instant đời 2 nướng `118d5352…`). Mã này và ba tệp deployment đời 3 (Instant, Schedule, Prepaid)
+phải lên CÙNG một lượt.
+
 ## 2026-10-10 — MagicSDK: lovelace két mặc định của `createVault` = min-ADA CHÍNH XÁC của output két
 
 **Đổi gì.** `createVault` đặt lovelace két mặc định bằng min-ADA chính xác của ĐÚNG output két sẽ ghi (địa chỉ két, inline

@@ -81,20 +81,20 @@ export type CarpNetwork = "Mainnet" | "Preview" | "Preprod";
 export const CARP_POLICY_ID: Record<CarpNetwork, string | null> = {
   Mainnet: null, // chưa deploy (2026-09-11)
   Preview: null, // KHÔNG CÓ CARP trên Preview (2026-09-11)
-  // Đời 6, cập nhật 2026-10-04. Nguồn: GET
-  // https://api.magiclamp.eco/carpetmint/v1/instance/Preprod ▸ `instance.anchor`
-  // (đo 2026-10-04; instance "CARP@bootstrap-tlamp", deployedAt
-  // 2026-10-03T23:17:17Z, sha256 khai 610a02c9…). SOFT-PIN: đây là giá trị MẶC
-  // ĐỊNH; bộ deploy đọc instance khi chạy và NÉM nếu lệch
-  // (`carpInstance.ts` ▸ `assertCarpMatchesInstance`).
-  Preprod: "71968a8df882a4dd24688b7904473a5d5f7e35332cba063e6ad7d379",
+  // Đời 7, cập nhật 2026-10-10 (thay đời 6 `71968a8d…`, đời 6 vẫn chạy song song
+  // nhưng cụm MAGIC đời 3 nướng đời 7). Nguồn: nhà CARP; đo on-chain Preprod —
+  // GlobalState genesis cc84ed633fced47383880b1fd5572f455e23966eb0fd9972eed0ce75f594f394,
+  // đúc thử aef2dafd657a4f29a02aa9a2d39f3f43ce633594e3ac7eead726db29db8ac9d9.
+  // SOFT-PIN: đây là giá trị MẶC ĐỊNH; bộ deploy đọc instance khi chạy và NÉM
+  // nếu lệch (`carpInstance.ts` ▸ `assertCarpMatchesInstance`).
+  Preprod: "0ee76cb19fad694569d56423852e1dc519dcad4c0938babdfa5d3716",
 };
 
 /** Băm 28 byte do nhà CarpetMint phát. KHÔNG phải hex của "CARP"/"tCARP". */
 export const CARP_ASSET_NAME: Record<CarpNetwork, string | null> = {
   Mainnet: null,
   Preview: null,
-  Preprod: "59d0bc483cd12816c029130722b4288c41d7423475a54b512027fd24", // cùng nguồn, đời 6
+  Preprod: "50eaf449c734fde2c3e73e52cc95889d235e489883683b5330bcabaa", // cùng nguồn, đời 7
 };
 
 /** 28 byte = 56 ký tự hex — độ dài của cả policy id lẫn asset name CARP. */

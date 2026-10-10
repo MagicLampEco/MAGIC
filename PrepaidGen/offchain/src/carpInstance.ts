@@ -13,9 +13,20 @@
 
 import type { CarpNetwork } from "./constants.js";
 
-/** Điểm cuối CHỈ ĐỌC của nhà CarpetMint. Instance trả về do họ sinh, không sửa tay. */
+/** Host theo mạng: `api.` chỉ cho mainnet, mỗi mạng thử có host riêng (quy ước 2026-10-10). */
+const CARP_HOST: Record<CarpNetwork, string> = {
+  Mainnet: "api.magiclamp.eco",
+  Preprod: "preprod.magiclamp.eco",
+  Preview: "preview.magiclamp.eco",
+};
+
+/** Điểm cuối CHỈ ĐỌC của nhà CARP. Instance trả về do họ sinh, không sửa tay.
+ *  `/carp/v1/instance/<mạng>` trả ĐỜI HIỆN HÀNH của CARP trên mạng đó (Preprod: đời 7, đo 200
+ *  ngày 2026-10-10). Đời cũ còn CDP thì giữ một đường riêng (đời 6:
+ *  `api.magiclamp.eco/carpetmint/v1/instance/Preprod`), nên đường này không đổi đời tại chỗ.
+ *  Cặp trong `constants.ts` lệch đời hiện hành ⟹ bộ deploy NÉM vì lệch — đúng chiều an toàn. */
 export const CARP_INSTANCE_URL = (network: CarpNetwork): string =>
-  `https://api.magiclamp.eco/carpetmint/v1/instance/${network}`;
+  `https://${CARP_HOST[network]}/carp/v1/instance/${network}`;
 
 const HEX28 = /^[0-9a-f]{56}$/;
 

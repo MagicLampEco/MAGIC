@@ -659,13 +659,13 @@ describe("cấu hình mạng đã verify", () => {
   // Ba bài dưới thay bài cũ "giữ đúng policy tCARP đã đúc thật trên hai
   // testnet" — bài đó ghim ba con số KHÔNG khớp nguồn nào (xem khối chú thích
   // ở `constants.ts`), nên nó xanh trong lúc nó sai.
-  it("Preprod mang đúng số của nhà CarpetMint (đời 6, đo instance công khai 2026-10-04)", () => {
+  it("Preprod mang đúng số của nhà CARP (đời 7, 2026-10-10)", () => {
     const { policyId, assetName } = carpAssetClass("Preprod");
     expect(policyId).toBe(
-      "71968a8df882a4dd24688b7904473a5d5f7e35332cba063e6ad7d379",
+      "0ee76cb19fad694569d56423852e1dc519dcad4c0938babdfa5d3716",
     );
     expect(assetName).toBe(
-      "59d0bc483cd12816c029130722b4288c41d7423475a54b512027fd24",
+      "50eaf449c734fde2c3e73e52cc95889d235e489883683b5330bcabaa",
     );
   });
 
